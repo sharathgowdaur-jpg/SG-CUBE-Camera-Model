@@ -132,3 +132,47 @@ graph TD
     GEMINI <--> DB_MEM
     GEMINI <--> DB_HIST
     TTS --> GUI
+
+## 👥 Team Members
+
+SG CUBE is developed and maintained by the following team members:
+
+| Team Member       | Role                       | GitHub                                               |
+| :---------------- | :------------------------- | :--------------------------------------------------- |
+| **Sharath U R**   | AI/ML & System Development | [@SharathUR](https://github.com/SharathUR)           |
+| **Team Member 2** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Team Member 3** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Team Member 4** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
+
+> 💡 **Repository Credit:**
+> This repository represents the collaborative work of the SG CUBE development team. All contributors are credited for their respective contributions to the project's research, development, testing, documentation, and design.
+
+### 🔗 Project Repository
+
+**SG CUBE — Next-Generation Multimodal AI Companion & Assistive Vision System**
+
+[View the SG CUBE Repository](https://github.com/your-username/SG-CUBE)
+
+---
+## 🙏 Original Repository & Attribution
+
+SG CUBE is based on and developed upon the work of the original repository created by **[Original Author Name]**.
+
+### 🔗 Original Repository
+
+* **Original Author:** [Original Author Name]
+* **GitHub:** [@OriginalGitHubUsername](https://github.com/OriginalGitHubUsername)
+* **Original Repository:** [Repository Name](https://github.com/OriginalGitHubUsername/OriginalRepository)
+
+We sincerely acknowledge and credit the original author for the source code, architecture, concepts, and/or implementation that served as the foundation for this project.
+
+SG CUBE includes modifications, extensions, integrations, and additional features developed for this project.
+
+> **Credit:** This project does not claim the original work as entirely original. Appropriate credit is given to the original author and repository from which this project was derived.
+
+
+
+## 📜 License
+
+SG CUBE is released under the **MIT License**. See the [`LICENSE`](LICENSE) file for details.
+
