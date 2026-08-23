@@ -1004,18 +1004,6 @@ Example:
 
 ---
 
-# 🎥 Demo
-
-Add your official demonstration video here:
-
-> ▶️ **Watch SG CUBE Demo**
-
-Example:
-
-```markdown
-[![SG CUBE Demo](docs/demo-thumbnail.png)](YOUR_VIDEO_URL)
-```
-
 ---
 
 # 👥 Team & Contributors
@@ -1024,10 +1012,10 @@ SG CUBE is developed and maintained by its contributors.
 
 | Team Member       | Role                       | Main Contribution                              | GitHub                                               |
 | ----------------- | -------------------------- | ---------------------------------------------- | ---------------------------------------------------- |
-| **Sharath U R**   | AI/ML & System Development | AI, vision, integration and system development | [@SharathUR](https://github.com/SharathUR)           |
-| **Team Member 2** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
-| **Team Member 3** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
-| **Team Member 4** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Sharath U R**   | AI/ML  student             | AI, vision, integration and system development | [@SharathUR](https://github.com/SharathUR)           |
+| **Gajanad V D**   | AI/ML student              | Backend & Data Developer                       | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Ganesh B**      | AI/ML student              | UI/UX & Integration Developer                  | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Gangadhara**    | AI/ML student              | Testing & Deployment                           | [@GitHubUsername](https://github.com/GitHubUsername) |
 
 > 💡 Replace the placeholder team members with the actual contributors and their contributions.
 
@@ -1043,9 +1031,9 @@ The original project served as a foundation for this version, and appropriate cr
 
 ### Original Project
 
-* **Original Author:** `[ORIGINAL AUTHOR NAME]`
-* **GitHub:** `[@OriginalGitHubUsername](https://github.com/OriginalGitHubUsername)`
-* **Original Repository:** `[Repository Name](https://github.com/OriginalGitHubUsername/OriginalRepository)`
+* **Original Author:** `[Xiaoan (Sean) Liu]`
+* **GitHub:** `[@sseanliu](https://github.com/sseanliu)`
+* **Original Repository:** `[VisionClaw](https://github.com/Intent-Lab/VisionClaw)`
 
 ### Attribution
 
@@ -1058,10 +1046,9 @@ SG CUBE contains modifications, extensions, integrations, improvements, testing,
 ### Please replace before publishing
 
 ```text
-[ORIGINAL AUTHOR NAME]
-[OriginalGitHubUsername]
-[OriginalRepository]
-[Repository Name]
+* **Original Author:** `[Xiaoan (Sean) Liu]`
+* **GitHub:** `[@sseanliu](https://github.com/sseanliu)`
+* **Original Repository:** `[VisionClaw](https://github.com/Intent-Lab/VisionClaw)`
 ```
 
 This ensures the original creator receives clear and visible credit.
@@ -1076,7 +1063,7 @@ This ensures the original creator receives clear and visible credit.
 
 ### Original Author / Founder
 
-**[ORIGINAL AUTHOR NAME]**
+**[https://github.com/sseanliu]**
 
 ### Current Project Contributors
 
