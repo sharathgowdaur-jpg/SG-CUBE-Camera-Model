@@ -980,20 +980,6 @@ SG CUBE Opens Again
 
 ---
 
-# 📸 Screenshots
-
-Recommended repository structure:
-
-```text
-docs/
-├── home.png
-├── vision.png
-├── memory.png
-├── history.png
-├── people.png
-└── settings.png
-```
-
 Add your actual screenshots to the `docs/` directory and reference them here.
 
 Example:
@@ -1012,9 +998,9 @@ SG CUBE is developed and maintained by its contributors.
 
 | Team Member       | Role                       | Main Contribution                              | GitHub                                               |
 | ----------------- | -------------------------- | ---------------------------------------------- | ---------------------------------------------------- |
-| **Sharath U R**   | AI/ML  student             | AI, vision, integration and system development | [@SharathUR](https://github.com/SharathUR)           |
-| **Gajanad V D**   | AI/ML student              | Backend & Data Developer                       | [@GitHubUsername](https://github.com/GitHubUsername) |
-| **Ganesh B**      | AI/ML student              | UI/UX & Integration Developer                  | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Sharath U R**   | AI/ML  student             | AI, vision, integration and system development | [@SharathUR](https://github.com/sharathgowdaur-jpg)  |
+| **Gajanad V D**   | AI/ML student              | Backend & Data Developer                       | [@GitHubUsername](https://github.com/gajanand27-05) |
+| **Ganesh B**      | AI/ML student              | UI/UX & Integration Developer                  | [@GitHubUsername](https://github.com/Ganu39)         |
 | **Gangadhara**    | AI/ML student              | Testing & Deployment                           | [@GitHubUsername](https://github.com/GitHubUsername) |
 
 > 💡 Replace the placeholder team members with the actual contributors and their contributions.
