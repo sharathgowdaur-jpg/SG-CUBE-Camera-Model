@@ -1,178 +1,1327 @@
 <div align="center">
 
 # 🧊 SG CUBE
+
 ### *Next-Generation Multimodal AI Companion & Assistive Vision System*
 
-[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-Multimodal%20Live%20API-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
-[![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://microsoft.com/windows)
-[![Tests](https://img.shields.io/badge/Tests-196%20Passed%20(100%25)-00ff88?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
-
 <p align="center">
-  <strong>An intelligent, low-latency, real-time vision assistant and personal companion engineered for visually impaired, blind, and hands-free users.</strong>
+
+**See. Understand. Remember. Assist.**
+
 </p>
 
-[Key Features](#-key-features) •
-[Architecture](#-system-architecture) •
-[Quick Start](#-quick-start) •
-[Voice Commands](#-voice-commands--interaction) •
-[Installation Package](#-one-click-windows-installer) •
-[Credits & Attribution](#-credits--acknowledgments) •
-[License](#-license)
+<p align="center">
+A real-time multimodal AI vision companion and assistive assistant designed primarily for visually impaired and blind users, while also providing general-purpose AI assistance.
+</p>
 
----
+<br>
+
+[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge\&logo=python\&logoColor=white)](https://www.python.org/)
+[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-Multimodal%20Live%20API-4285F4?style=for-the-badge\&logo=google\&logoColor=white)](https://ai.google.dev/)
+[![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-5C3EE8?style=for-the-badge\&logo=opencv\&logoColor=white)](https://opencv.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?style=for-the-badge\&logo=sqlite\&logoColor=white)](https://www.sqlite.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?style=for-the-badge\&logo=windows\&logoColor=white)](https://www.microsoft.com/windows)
+[![Tests](https://img.shields.io/badge/Tests-Verified-00ff88?style=for-the-badge\&logo=pytest\&logoColor=white)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe?style=for-the-badge)](LICENSE)
+
+<br>
+
+**Voice • Vision • Memory • Accessibility • Safety • Multimodal AI**
+
+<br>
+
+[✨ Features](#-key-features) •
+[🏗️ Architecture](#️-system-architecture) •
+[🚀 Installation](#-installation) •
+[🎙️ Commands](#️-example-voice-commands) •
+[🧪 Testing](#-testing--verification) •
+[👥 Team](#-team--contributors) •
+[🙏 Attribution](#-original-repository--attribution) •
+[📜 License](#-license)
 
 </div>
 
-## 🌌 Overview
+---
 
-**SG CUBE** transforms standard webcams and microphones into an intuitive, person-aware sensory assistant. Powered by **Google Gemini Multimodal Live Streaming** combined with an **Edge Computer Vision Suite**, SG CUBE provides spatial reasoning, instant text recognition, banknote validation, face identification, long-term memory recall, and seamless hands-free wake-word standby.
+# 🌌 Overview
 
-Designed with accessibility at its core, the system prioritizes **natural conversational responses**, **spatially descriptive audio feedback** (e.g. *"slightly to your left, about 2 feet away"*), and **zero-lag continuous interaction**.
+**SG CUBE** is an intelligent, real-time multimodal AI vision companion and assistive assistant that combines **voice interaction, computer vision, multimodal AI, personal memory, environmental understanding, and local persistence** into a single system.
+
+The project is designed primarily to assist **visually impaired and blind users** through natural voice interaction and camera-based perception while also providing general-purpose AI assistance.
+
+SG CUBE brings together:
+
+* 🎙️ Real-time voice interaction
+* 🤖 Google Gemini Live multimodal AI
+* 👁️ Real-time computer vision
+* 👤 Face detection and recognition
+* 🧠 Personal memory
+* 💬 Conversation history
+* 📖 OCR and text reading
+* 💵 Indian currency recognition
+* 📦 Object finding
+* 🧭 Spatial awareness
+* 🌍 Environment and scene understanding
+* ⚠️ Safety monitoring
+* 🎨 Color detection
+* 💡 Light detection
+* 📦 Product and medicine scanning
+* 🎧 Background wake-word listening
+* 💤 Sleep and wake control
+* 🔑 Multiple Gemini API key management and failover
+* 🔐 Local persistent storage
 
 ---
 
-## ✨ Key Features
+# 🎯 Project Vision
 
-### ⚡ 1. Continuous Multimodal Intelligence
-- **Real-Time Gemini Live Streaming**: Continuous bidirectional audio and video comprehension.
-- **Low-Latency Spoken Responses**: Streaming 24kHz PCM audio playback with responsive barge-in support.
-- **Warm & Intelligent Persona**: Spatially grounded descriptions designed specifically for accessibility.
+SG CUBE is built around a simple interaction philosophy:
 
-### 🔑 2. Multi-API Key Failover & Resilience
-- **3-Tier Key Rotation**: Seamless switching across **Primary**, **Secondary**, and **Tertiary** Gemini API keys.
-- **Instant Quota Recovery**: Automatically handles `HTTP 429 (Resource Exhausted)` and network errors without interrupting ongoing conversations.
-- **Local In-App Key Manager**: Secure, obfuscated in-memory and local storage with live test & validation controls.
+```text
+        🎙️ LISTEN
+            ↓
+       🧠 UNDERSTAND
+            ↓
+          👁️ SEE
+            ↓
+        🔍 ANALYZE
+            ↓
+        🧠 REMEMBER
+            ↓
+       💬 RESPOND
+            ↓
+        🤝 ASSIST
+```
 
-### 👤 3. Edge Face Recognition & Face Memory
-- **256-D Feature Vector**: Hybrid representation using HSV color distribution (96-D) + 4x4 spatial gradient grids (160-D) with L2 unit normalization.
-- **Local Cosine Similarity Matcher**: Instant matching against enrolled loved ones and friends with strict threshold rejection (`threshold = 0.55`).
-- **Zero-Cloud Privacy**: Face crops and embeddings are stored 100% locally on your machine.
+Instead of depending only on traditional buttons, menus, and text interfaces, SG CUBE provides a **voice-first interaction model supported by real-time visual perception**.
 
-### 👁️ 4. Assistive Edge Vision Suite
-| Engine | Capability | Output Description |
-| :--- | :--- | :--- |
-| 📖 **OCR Engine** | Text extraction & parsing | Reads documents, book pages, product labels, and signs aloud. |
-| 💵 **Currency Detector** | Banknote detection | Identifies banknote denominations and currencies instantly. |
-| 🧭 **Spatial & Object Locator** | Relative geometry & distance | Detects everyday objects with clock-face directions (*"Cup at 2 o'clock"*). |
-| 🎨 **Color & Light Sensor** | Ambient luminance & palette | Evaluates room illumination and dominant clothing/surface colors. |
-| 📦 **Product Scanner** | Packaging & barcode analysis | Extracts product names, brands, and key ingredients. |
-| 🛡️ **Safety Analyzer** | Hazard awareness | Warns of obstacles, stairs, doorways, and moving items. |
-
-### 🎙️ 5. Two-Stage Standby Wake Listener
-- **Stage 1 (VAD)**: Energy and zero-crossing Voice Activity Detector processing 100ms frames (<100ms latency).
-- **Stage 2 (Phonetic Classification)**: Rolling circular buffer acoustic matcher listening for `"Hey SG CUBE"` / `"SG CUBE"`.
-- **Authoritative Microphone Handoff**: Strict single-owner audio routing ensuring zero competition between background listening and active conversation.
-
-### 🧠 6. Long-Term Memory & SQLite History
-- **Fact & Preference Store**: SQLite WAL-mode memory database for personal facts (*"Remember my favorite tea is Earl Grey"*).
-- **Conversations Journal**: Offline SQLite history tracking past interaction transcripts and timestamps.
-
-### 🎨 7. Modern Cyberpunk GUI & 3D Orb Visualizer
-- **Animated Audio Orb**: Smooth pulsing neon states reflecting listening, thinking, speaking, and sleeping modes.
-- **High-Contrast Dark Theme**: Clean visual hierarchy crafted for low-vision clarity and easy debugging.
+The goal is to make AI assistance feel more natural, contextual, and accessible.
 
 ---
 
-## 🏗️ System Architecture
+# ✨ Key Features
+
+## ⚡ 1. Continuous Multimodal Intelligence
+
+SG CUBE uses **Google Gemini Live** for real-time multimodal interaction.
+
+### Capabilities
+
+* Real-time bidirectional communication
+* Streaming audio interaction
+* Vision-aware conversation
+* Multi-turn dialogue
+* Continuous conversation
+* Spoken responses
+* Low-latency interaction
+* Barge-in / interruption
+* Dedicated speaker management
+* Voice confirmations
+* Assistive spoken output
+
+### Example
+
+**User**
+
+> What do you see?
+
+**SG CUBE**
+
+> I can see a person standing in front of you.
+
+---
+
+# 🔑 2. Multi-API Key Failover
+
+SG CUBE supports multiple Gemini API keys for supported quota and transient network failures.
+
+```text
+Primary API Key
+       ↓
+Secondary API Key
+       ↓
+Tertiary API Key
+```
+
+### Features
+
+* Primary / secondary / tertiary key support
+* Automatic failover
+* Quota-aware recovery
+* Network failure handling
+* Local key configuration
+* Application settings integration
+
+### Example configuration
+
+```env
+GEMINI_API_KEY_1=
+GEMINI_API_KEY_2=
+GEMINI_API_KEY_3=
+```
+
+> ⚠️ **Never publish real API credentials.**
+
+---
+
+# 👤 3. Face Detection & Recognition
+
+SG CUBE provides local face recognition using feature embeddings and similarity matching.
+
+### Capabilities
+
+* Real-time face detection
+* Multiple face detection
+* Bounding boxes
+* Face enrollment
+* Face recognition
+* Unknown-face handling
+* Local face profiles
+* Profile persistence
+* Face profile deletion
+* Recognition after restart
+
+### 🧠 Face Memory
+
+Users can explicitly save people into local face memory.
+
+**Example:**
+
+> Save this face as Rahul.
+
+Later:
+
+> Who is this?
+
+SG CUBE can attempt to recognize the enrolled person.
+
+Face profiles are designed to remain local rather than being automatically uploaded to a remote face database.
+
+---
+
+# 👁️ 4. Assistive Computer Vision Suite
+
+| Engine                 | Capability           | Purpose                                        |
+| ---------------------- | -------------------- | ---------------------------------------------- |
+| 📖 OCR Engine          | Text extraction      | Read documents, labels, signs and visible text |
+| 💵 Currency Detector   | Banknote recognition | Identify supported Indian denominations        |
+| 📦 Object Finder       | Object detection     | Locate everyday objects                        |
+| 🧭 Spatial Awareness   | Relative positioning | Describe left/right/near/far relationships     |
+| 🌍 Scene Understanding | Environment analysis | Understand surrounding context                 |
+| 🛡️ Safety Analyzer    | Hazard awareness     | Identify potential environmental risks         |
+| 🎨 Color Detection     | Color identification | Identify visible colors                        |
+| 💡 Light Detection     | Lighting analysis    | Classify ambient lighting                      |
+| 📦 Product Scanner     | Packaging analysis   | Process supported product information          |
+| 🔎 QR / Barcode        | Code detection       | Detect supported codes                         |
+
+---
+
+# 📖 5. OCR — Text Reading
+
+The OCR engine provides visual text assistance.
+
+### Capabilities
+
+* Text extraction
+* Image preprocessing
+* Adaptive thresholding
+* Multi-line text handling
+* Spoken text reading
+* Camera-based text assistance
+
+### Example
+
+> Read this.
+
+SG CUBE processes visible text and provides the result through the voice system.
+
+---
+
+# 💵 6. Indian Currency Recognition
+
+SG CUBE includes Indian banknote recognition.
+
+### Supported denominations
+
+* ₹10
+* ₹20
+* ₹50
+* ₹100
+* ₹200
+* ₹500
+* ₹2000
+
+The result can be provided through the assistant's visual and spoken response systems.
+
+---
+
+# 📦 7. Object Finder
+
+SG CUBE can help locate objects in the user's surroundings.
+
+### Example
+
+> Find my phone.
+
+Possible spatial results:
+
+```text
+Left
+Center
+Right
+
+Near
+Far
+```
+
+---
+
+# 🧭 8. Spatial Awareness
+
+The spatial system provides relative object positioning.
+
+Examples:
+
+* Left
+* Center
+* Right
+* Near
+* Far
+* Relative position
+
+### Example response
+
+> Your phone is on the right and nearby.
+
+---
+
+# 🌍 9. Environment & Scene Awareness
+
+SG CUBE can analyze the surrounding environment and provide structured information.
+
+Possible information includes:
+
+* People count
+* Room/environment context
+* Detected objects
+* Lighting conditions
+* Spatial relationships
+* Scene changes
+
+---
+
+# ⚠️ 10. Safety Monitoring
+
+SG CUBE includes assistive safety analysis.
+
+Potential detections include:
+
+* Nearby obstacles
+* Close objects
+* Stairs and steps
+* Collision risks
+* Proximity hazards
+
+Safety information can be delivered through the assistant's voice system.
+
+> ⚠️ **SG CUBE is an assistive system and should not be treated as a replacement for emergency services or professional assistance.**
+
+---
+
+# 🎨 11. Color Detection
+
+SG CUBE can identify dominant colors in visible objects and clothing.
+
+### Example
+
+> What color is this?
+
+**Response**
+
+> Blue.
+
+---
+
+# 💡 12. Light Detection
+
+The light analysis system classifies ambient lighting.
+
+Possible states:
+
+```text
+Dark
+Dim
+Normal
+Bright
+```
+
+### Example
+
+> Is the room dark?
+
+---
+
+# 📦 13. Product & Medicine Scanner
+
+The product scanner can analyze supported packaging and labels.
+
+### Capabilities
+
+* Barcode detection
+* QR code detection
+* Package text
+* Product information extraction
+* Expiration-date parsing
+
+### Example
+
+```text
+EXP: 08/2027
+```
+
+---
+
+# 🎧 14. Background Wake Listener
+
+SG CUBE includes a dedicated background wake listener designed for low-latency standby listening.
+
+### Supported wake phrases
+
+```text
+SG CUBE
+Hey SG CUBE
+S G CUBE
+Ess Gee Cube
+Es Gee Cube
+SG Cub
+SG Cue
+```
+
+The system is designed to handle reasonable phonetic variations.
+
+### Wake Pipeline
+
+```text
+🎙️ Microphone
+      ↓
+Voice Activity Detection
+      ↓
+Rolling Audio Buffer
+      ↓
+Wake Word Matcher
+      ↓
+Wake Event
+      ↓
+🧊 SG CUBE
+```
+
+The listener uses a two-stage approach:
+
+1. Low-cost speech activity detection
+2. Phonetic/acoustic wake-word matching
+
+---
+
+# 🔄 15. Intelligent Application Lifecycle
+
+SG CUBE uses a state-aware voice lifecycle.
+
+### Windows Login
+
+```text
+WINDOWS LOGIN
+      ↓
+Background Listener ON
+      ↓
+"Hey SG CUBE"
+      ↓
+SG CUBE Opens
+      ↓
+Main Voice System Active
+      ↓
+Background Listener OFF
+```
+
+### Sleep
+
+```text
+ACTIVE
+  ↓
+"Go to sleep"
+  ↓
+Main Microphone OFF
+Camera OFF
+Gemini OFF
+  ↓
+Background Listener ON
+  ↓
+Wait for Wake Word
+```
+
+### Closed Application
+
+```text
+SG CUBE CLOSED
+      ↓
+Background Listener ON
+      ↓
+Wait for Wake Word
+      ↓
+"Hey SG CUBE"
+      ↓
+SG CUBE Opens Again
+```
+
+### Microphone Ownership
+
+| State           | Main Microphone | Background Listener |
+| --------------- | --------------: | ------------------: |
+| Windows Login   |             OFF |                  ON |
+| Closed          |             OFF |                  ON |
+| Sleep           |             OFF |                  ON |
+| Open + Active   |              ON |                 OFF |
+| System Shutdown |             OFF |                 OFF |
+
+This prevents competing microphone streams.
+
+---
+
+# 🧠 16. Personal Memory
+
+SG CUBE provides persistent local personal memory.
+
+### Example
+
+> Remember my favorite color is blue.
+
+Later:
+
+> What is my favorite color?
+
+**Expected response:**
+
+> Blue.
+
+The memory system supports saving, recalling, and forgetting supported information.
+
+---
+
+# 💬 17. Conversation History
+
+SG CUBE stores multi-session conversation history locally.
+
+The history system can preserve:
+
+* User messages
+* Assistant responses
+* Conversation sessions
+* Session metadata
+
+This allows the application to maintain continuity across sessions.
+
+---
+
+# 👤 18. User Profile
+
+SG CUBE supports first-run user profile setup.
+
+Users can configure:
+
+* Name
+* Display name
+* Preferences
+* Application settings
+* API configuration
+
+A fresh setup does not use a hardcoded personal identity.
+
+---
+
+# 🎨 19. Modern AI Interface
+
+SG CUBE is designed around a modern voice-first interaction experience.
+
+The interface can provide:
+
+* Voice interaction feedback
+* Listening states
+* Thinking states
+* Speaking states
+* Sleep states
+* High-contrast visual hierarchy
+* System status information
+* Camera/voice interaction feedback
+
+---
+
+# 🏗️ System Architecture
 
 ```mermaid
 graph TD
-    subgraph Input_Sources [Sensory Inputs]
-        MIC[Authoritative Microphone]
-        CAM[USB / Integrated Camera]
+
+    subgraph INPUT["🎙️ Sensory Inputs"]
+        MIC["Authoritative Microphone"]
+        CAM["USB / Integrated Camera"]
     end
 
-    subgraph Audio_Routing [Audio & Microphone Lifecycle]
-        WAKE[Background Standby Listener]
-        MAIN_MIC[Active Gemini Microphone]
-        LOCK[Single-Instance IPC Mutex :49152-:49154]
+    subgraph AUDIO["🔊 Audio Lifecycle"]
+        WAKE["Background Standby Listener"]
+        MAIN["Active Voice System"]
+        LOCK["Single Instance / IPC"]
     end
 
-    subgraph AI_Core [Intelligence & Vision Core]
-        GEMINI[Gemini Multimodal Live API]
-        FAILOVER[Multi-Key Failover Manager]
-        VISION[Assistive Vision Engine]
+    subgraph CORE["🧠 Multimodal Intelligence"]
+        GEMINI["Google Gemini Live"]
+        FAILOVER["API Key Failover Manager"]
+        VISION["Assistive Vision Engine"]
     end
 
-    subgraph Assistive_Engines [Edge Vision Modules]
-        FACE[Face Memory & Recognition 256-D]
-        OCR[OCR Text Extraction Engine]
-        CURR[Currency Detector]
-        OBJ[Spatial & Object Analyzer]
-        COLOR[Color & Light Sensor]
+    subgraph VISION["👁️ Vision Engines"]
+        FACE["Face Recognition"]
+        OCR["OCR"]
+        CURR["Currency"]
+        OBJ["Object Finder"]
+        SPACE["Spatial Awareness"]
+        COLOR["Color Detection"]
+        LIGHT["Light Detection"]
+        SAFETY["Safety Analysis"]
+        PRODUCT["Product Scanner"]
     end
 
-    subgraph Persistence [Local Encrypted Storage]
-        DB_MEM[(Memory DB - SQLite WAL)]
-        DB_HIST[(History DB - SQLite WAL)]
-        FACE_DIR[(Local Face Profiles)]
-        PREFS[(User Preferences & Keys)]
+    subgraph MEMORY["💾 Local Persistence"]
+        MEM["Personal Memory"]
+        HIST["Conversation History"]
+        FACE_DB["Face Profiles"]
+        PREF["User Preferences"]
     end
 
-    subgraph Output [Sensory Output]
-        TTS[Authoritative 24kHz Speaker Worker]
-        GUI[3D Cyberpunk Orb GUI]
+    subgraph OUTPUT["🤝 Assistance"]
+        SPEAKER["Voice Response"]
+        GUI["SG CUBE Interface"]
     end
 
-    CAM --> VISION
     MIC --> WAKE
-    MIC --> MAIN_MIC
-    WAKE -- "Wake Match" --> LOCK
-    LOCK --> MAIN_MIC
-    MAIN_MIC --> GEMINI
-    VISION --> FACE & OCR & CURR & OBJ & COLOR
-    GEMINI <--> FAILOVER
-    FAILOVER <--> PREFS
-    GEMINI --> TTS
+    MIC --> MAIN
+    CAM --> VISION
+
+    WAKE --> LOCK
+    LOCK --> MAIN
+
+    MAIN --> GEMINI
     VISION --> GEMINI
-    FACE <--> FACE_DIR
-    GEMINI <--> DB_MEM
-    GEMINI <--> DB_HIST
-    TTS --> GUI
 
-## 👥 Team Members
+    GEMINI <--> FAILOVER
 
-SG CUBE is developed and maintained by the following team members:
+    VISION --> FACE
+    VISION --> OCR
+    VISION --> CURR
+    VISION --> OBJ
+    VISION --> SPACE
+    VISION --> COLOR
+    VISION --> LIGHT
+    VISION --> SAFETY
+    VISION --> PRODUCT
 
-| Team Member       | Role                       | GitHub                                               |
-| :---------------- | :------------------------- | :--------------------------------------------------- |
-| **Sharath U R**   | AI/ML & System Development | [@SharathUR](https://github.com/SharathUR)           |
-| **Team Member 2** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
-| **Team Member 3** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
-| **Team Member 4** | —                          | [@GitHubUsername](https://github.com/GitHubUsername) |
+    FACE <--> FACE_DB
+    GEMINI <--> MEM
+    GEMINI <--> HIST
+    GEMINI <--> PREF
 
-> 💡 **Repository Credit:**
-> This repository represents the collaborative work of the SG CUBE development team. All contributors are credited for their respective contributions to the project's research, development, testing, documentation, and design.
-
-### 🔗 Project Repository
-
-**SG CUBE — Next-Generation Multimodal AI Companion & Assistive Vision System**
-
-[View the SG CUBE Repository](https://github.com/your-username/SG-CUBE)
+    GEMINI --> SPEAKER
+    SPEAKER --> GUI
+```
 
 ---
-## 🙏 Original Repository & Attribution
 
-SG CUBE is based on and developed upon the work of the original repository created by **[Original Author Name]**.
+# 🏗️ Project Structure
 
-### 🔗 Original Repository
+```text
+SG-CUBE/
+│
+├── assistive/
+│   ├── api_key_manager.py
+│   ├── command_router.py
+│   ├── conversation_history.py
+│   ├── face_memory.py
+│   ├── face_recognition.py
+│   ├── memory_manager.py
+│   ├── ocr_engine.py
+│   ├── currency_detector.py
+│   ├── object_detector.py
+│   └── vision_engine.py
+│
+├── tests/
+│
+├── data/
+│   ├── face_memory/
+│   ├── history/
+│   ├── memory/
+│   └── user_preferences/
+│
+├── visionclaw_gui.py
+├── wake_listener.py
+├── wake_word_matcher.py
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── LICENSE
+└── README.md
+```
 
-* **Original Author:** [Original Author Name]
-* **GitHub:** [@OriginalGitHubUsername](https://github.com/OriginalGitHubUsername)
-* **Original Repository:** [Repository Name](https://github.com/OriginalGitHubUsername/OriginalRepository)
+> Runtime `data/` contents should be created locally and should never contain private user information in the public repository.
+
+---
+
+# 🛠️ Technology Stack
+
+### Programming
+
+* Python 3.10+
+* SQLite
+* Tkinter
+
+### Artificial Intelligence
+
+* Google Gemini Live
+* Multimodal streaming AI
+* Conversational AI
+* Vision-aware AI
+
+### Computer Vision
+
+* OpenCV
+* Face recognition
+* OCR
+* Object detection
+* Image preprocessing
+* Spatial reasoning
+
+### Audio
+
+* Microphone streaming
+* Voice Activity Detection
+* Wake-word matching
+* Audio buffering
+* Speech output
+
+### Storage
+
+* SQLite
+* WAL-based local storage
+* Local persistence
+
+### Windows Integration
+
+* Windows startup
+* Background wake listener
+
+### IPC
+
+* Single-instance protection
+* System tray
+* Hardware recovery
+
+---
+
+# 🚀 Installation
+
+## Prerequisites
+
+Recommended:
+
+* Windows 10 or Windows 11
+* Python 3.10
+* Python 3.11
+* Python 3.12
+* Python 3.13
+* Webcam
+* Microphone
+* Speaker or headphones
+* Internet connection for Gemini Live
+
+---
+
+## 1️⃣ Clone the Repository
+
+```bash
+git clone https://github.com/<your-username>/SG-CUBE.git
+cd SG-CUBE
+```
+
+---
+
+## 2️⃣ Create a Virtual Environment
+
+### Windows
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### Linux/macOS
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+---
+
+## 3️⃣ Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+# 🔐 Configure Gemini API Keys
+
+## Option 1 — `.env`
+
+Copy:
+
+```text
+.env.example
+```
+
+to:
+
+```text
+.env
+```
+
+Then configure:
+
+```env
+GEMINI_API_KEY_1=
+GEMINI_API_KEY_2=
+GEMINI_API_KEY_3=
+```
+
+> 🚨 **Never commit `.env` to GitHub.**
+
+## Option 2 — In-App Settings
+
+Launch SG CUBE and use the application settings for API key management where supported.
+
+---
+
+# ▶️ Run SG CUBE
+
+```bash
+python visionclaw_gui.py
+```
+
+For Windows:
+
+```text
+run.bat
+```
+
+---
+
+# 🎧 Run Background Wake Listener
+
+For development/testing:
+
+```bash
+python wake_listener.py
+```
+
+Production deployments can configure the background listener to start automatically with Windows.
+
+---
+
+# 🧪 Testing & Verification
+
+Run the complete test suite:
+
+```bash
+pytest tests/
+```
+
+Run a specific test:
+
+```bash
+pytest tests/test_memory_manager.py
+```
+
+Example:
+
+```bash
+pytest tests/test_face_recognition_master.py
+```
+
+## 📊 Current Verification
+
+| Verification Area              | Status |
+| ------------------------------ | ------ |
+| Background Listener Lifecycle  | ✅ PASS |
+| Sleep → Wake                   | ✅ PASS |
+| Closed → Wake                  | ✅ PASS |
+| Background Listener Regression | ✅ PASS |
+| Memory Save Verification       | ✅ PASS |
+| Face Recognition Verification  | ✅ PASS |
+| Camera                         | ✅ PASS |
+| Voice                          | ✅ PASS |
+| Gemini                         | ✅ PASS |
+| Persistence                    | ✅ PASS |
+
+### Latest reported verification numbers
+
+* **196/196** background-listener lifecycle regression tests passed
+* **20/20** Sleep → Wake cycles passed
+* **20/20** Close → Wake cycles passed
+* **9/9** installed memory-save tests passed
+* **180/180** memory/save regression tests passed
+* **9/9** face-recognition master tests passed
+* **189/189** face-recognition regression tests passed
+
+> These figures represent reported test runs and should be rerun for every future release.
+
+---
+
+# 🗣️ Example Voice Commands
+
+## 🎙️ General
+
+```text
+"Hey SG CUBE"
+"What do you see?"
+"How are you?"
+"Tell me something."
+```
+
+## 👁️ Vision
+
+```text
+"Describe what you see."
+"Who is in front of me?"
+"Read this."
+"What color is this?"
+"Is the room dark?"
+"Find my phone."
+"Is it safe?"
+```
+
+## 🧠 Memory
+
+```text
+"Remember my favorite color is blue."
+"What is my favorite color?"
+"Remember my dog name is Bruno."
+"Forget that information."
+"Save this information."
+```
+
+## 👤 Face Memory
+
+```text
+"Save this face as Rahul."
+"Who is this?"
+```
+
+## 💤 Sleep / Wake
+
+```text
+"Go to sleep."
+"Hey SG CUBE."
+```
+
+---
+
+# 🔄 Example User Journey
+
+```text
+Windows Login
+      ↓
+Background Listener ON
+      ↓
+"Hey SG CUBE"
+      ↓
+SG CUBE Opens
+      ↓
+Greeting
+      ↓
+Camera + Voice System + Gemini
+      ↓
+Continuous Conversation
+      ↓
+Vision / Memory / Safety
+      ↓
+"Go to sleep"
+      ↓
+Main Assistant Sleeps
+      ↓
+Background Listener ON
+      ↓
+"Hey SG CUBE"
+      ↓
+SG CUBE Wakes
+```
+
+### Closed Application
+
+```text
+SG CUBE
+   ↓
+Close
+   ↓
+Main Application OFF
+   ↓
+Background Listener ON
+   ↓
+"Hey SG CUBE"
+   ↓
+SG CUBE Opens Again
+```
+
+---
+
+# 📸 Screenshots
+
+Recommended repository structure:
+
+```text
+docs/
+├── home.png
+├── vision.png
+├── memory.png
+├── history.png
+├── people.png
+└── settings.png
+```
+
+Add your actual screenshots to the `docs/` directory and reference them here.
+
+Example:
+
+```markdown
+![SG CUBE Interface](docs/home.png)
+```
+
+---
+
+# 🎥 Demo
+
+Add your official demonstration video here:
+
+> ▶️ **Watch SG CUBE Demo**
+
+Example:
+
+```markdown
+[![SG CUBE Demo](docs/demo-thumbnail.png)](YOUR_VIDEO_URL)
+```
+
+---
+
+# 👥 Team & Contributors
+
+SG CUBE is developed and maintained by its contributors.
+
+| Team Member       | Role                       | Main Contribution                              | GitHub                                               |
+| ----------------- | -------------------------- | ---------------------------------------------- | ---------------------------------------------------- |
+| **Sharath U R**   | AI/ML & System Development | AI, vision, integration and system development | [@SharathUR](https://github.com/SharathUR)           |
+| **Team Member 2** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Team Member 3** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
+| **Team Member 4** | —                          | —                                              | [@GitHubUsername](https://github.com/GitHubUsername) |
+
+> 💡 Replace the placeholder team members with the actual contributors and their contributions.
+
+---
+
+# 🙏 Original Repository & Attribution
+
+## ⚠️ Important Credit
+
+SG CUBE is **based on and developed upon the work of an original repository**.
+
+The original project served as a foundation for this version, and appropriate credit should be preserved for the original author and repository.
+
+### Original Project
+
+* **Original Author:** `[ORIGINAL AUTHOR NAME]`
+* **GitHub:** `[@OriginalGitHubUsername](https://github.com/OriginalGitHubUsername)`
+* **Original Repository:** `[Repository Name](https://github.com/OriginalGitHubUsername/OriginalRepository)`
+
+### Attribution
 
 We sincerely acknowledge and credit the original author for the source code, architecture, concepts, and/or implementation that served as the foundation for this project.
 
-SG CUBE includes modifications, extensions, integrations, and additional features developed for this project.
+SG CUBE contains modifications, extensions, integrations, improvements, testing, documentation, and additional features developed for this project.
 
-> **Credit:** This project does not claim the original work as entirely original. Appropriate credit is given to the original author and repository from which this project was derived.
+> **This project does not claim the original work as entirely original. The original author and repository are credited for the work from which this project was derived.**
 
+### Please replace before publishing
 
+```text
+[ORIGINAL AUTHOR NAME]
+[OriginalGitHubUsername]
+[OriginalRepository]
+[Repository Name]
+```
 
-## 📜 License
+This ensures the original creator receives clear and visible credit.
 
-SG CUBE is released under the **MIT License**. See the [`LICENSE`](LICENSE) file for details.
+---
 
+# 🏆 Authorship & Project Credit
+
+### Original Foundation
+
+**SG CUBE**
+
+### Original Author / Founder
+
+**[ORIGINAL AUTHOR NAME]**
+
+### Current Project Contributors
+
+The current contributors are responsible for their respective additions, modifications, integrations, testing, documentation, and development work.
+
+All contributors should receive appropriate credit for their respective contributions.
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+### Contribution Workflow
+
+```text
+Fork
+  ↓
+Create Feature Branch
+  ↓
+Develop
+  ↓
+Test
+  ↓
+Commit
+  ↓
+Push
+  ↓
+Pull Request
+  ↓
+Review
+  ↓
+Merge
+```
+
+Example:
+
+```bash
+git checkout -b feature/new-vision-module
+
+git add .
+git commit -m "Add new vision module"
+
+git push origin feature/new-vision-module
+```
+
+Then open a Pull Request through GitHub.
+
+---
+
+# 🐛 Bug Reports
+
+When reporting a bug, include:
+
+* Operating system
+* Python version
+* SG CUBE version
+* Steps to reproduce
+* Expected behavior
+* Actual behavior
+* Error messages
+* Relevant logs
+* Screenshots when useful
+
+### 🚫 Never upload
+
+```text
+❌ API keys
+❌ Passwords
+❌ Tokens
+❌ Private credentials
+❌ Personal memory databases
+❌ Face profiles
+❌ Private conversations
+❌ Private logs
+```
+
+---
+
+# 💡 Feature Requests
+
+Feature proposals are welcome.
+
+Please explain:
+
+1. What problem does the feature solve?
+2. Why is it useful?
+3. What behavior is expected?
+4. What implementation approach could be used?
+
+---
+
+# 🔒 Security
+
+If you discover a security vulnerability, avoid publishing sensitive information in a public issue.
+
+Never expose:
+
+```text
+❌ API keys
+❌ Passwords
+❌ Tokens
+❌ Private credentials
+❌ Private databases
+```
+
+Use responsible disclosure where possible.
+
+---
+
+# 🗺️ Roadmap
+
+Potential future directions include:
+
+* 🔊 Improved wake-word robustness
+* 🎧 Stronger noise rejection
+* 🌙 Better low-light vision
+* 👁️ Expanded assistive vision capabilities
+* 🌍 More languages
+* ♿ Improved accessibility
+* 🥽 Smart-glasses integration
+* 🧭 Expanded spatial reasoning
+* 🌡️ Additional environmental sensors
+* 🧠 More intelligent assistive workflows
+* 🚀 Broader deployment options
+
+> Roadmap items are future goals and should not be interpreted as completed features.
+
+---
+
+# 🎯 Project Goals
+
+### ♿ Accessibility
+
+Provide natural voice and vision assistance for visually impaired and blind users.
+
+### 🤖 Intelligent Assistance
+
+Create an assistant capable of understanding user requests and surrounding context.
+
+### 👁️ Real-Time Perception
+
+Combine camera-based perception with multimodal AI.
+
+### 🧠 Personalization
+
+Provide optional local memory, profile information, and face profiles.
+
+### 🛡️ Safety
+
+Help users identify environmental hazards and nearby objects.
+
+### 🗣️ Natural Interaction
+
+Enable voice-first interaction rather than relying only on traditional UI controls.
+
+---
+
+# 📌 Project Information
+
+| Property             | Details                           |
+| -------------------- | --------------------------------- |
+| **Project**          | SG CUBE                           |
+| **Version**          | 2.4.6                             |
+| **Platform**         | Windows                           |
+| **Primary Language** | Python                            |
+| **AI Engine**        | Google Gemini Live                |
+| **Computer Vision**  | OpenCV + Assistive Vision Engines |
+| **Database**         | SQLite                            |
+| **License**          | MIT                               |
+| **Status**           | Production Release Candidate      |
+
+---
+
+# 🔌 Optional / External Integrations
+
+## 🥽 Meta Glass
+
+SG CUBE includes Meta Glass-related integration points.
+
+Full end-to-end functionality depends on the required physical hardware and gateway/runtime infrastructure.
+
+> Do not assume full hardware support is available in every environment.
+
+## 🌐 Web3D
+
+SG CUBE includes Web3D-related assets/integration points.
+
+Full external rendering depends on the required standalone server/runtime infrastructure.
+
+---
+
+# 🙏 Acknowledgements
+
+SG CUBE builds upon open-source and public technologies including:
+
+* Python
+* OpenCV
+* SQLite
+* Google Gemini
+* Tkinter
+* WebSocket technologies
+* Python ecosystem libraries
+* Open-source computer vision research
+
+We acknowledge and appreciate the developers, researchers, and maintainers behind the technologies used by this project.
+
+---
+
+# ⭐ Support SG CUBE
+
+If you find SG CUBE useful or interesting:
+
+⭐ **Star the repository**
+
+🍴 **Fork the project**
+
+🐛 **Report bugs**
+
+💡 **Suggest improvements**
+
+🤝 **Contribute**
+
+📢 **Share the project**
+
+---
+
+# 📜 License
+
+SG CUBE is released under the **MIT License**.
+
+See the [`LICENSE`](LICENSE) file for complete license details.
+
+---
+
+<div align="center">
+
+# 🧊 SG CUBE
+
+### **See. Understand. Remember. Assist.**
+
+**Built with ❤️ for accessible and intelligent AI assistance.**
+
+<br>
+
+⭐ **Star • Fork • Contribute • Build the Future**
+
+</div>
