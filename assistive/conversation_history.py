@@ -3,7 +3,7 @@ import sqlite3
 import time
 import uuid
 import re
-import logging
+import threading
 from typing import List, Dict, Optional
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -17,16 +17,15 @@ def is_sensitive_info(text: str) -> bool:
     patterns = [
         r'\b(?:password|passcode|pin|cvv)\b',
         r'\b(?:api[_\s]?key|secret[_\s]?key|access[_\s]?token|auth[_\s]?token)\b',
-        r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',  # Credit Card pattern
+        r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',
         r'\b(?:bank|routing|account)\s*number\b'
     ]
     return any(re.search(p, lower) for p in patterns)
 
 class ConversationHistory:
     """
-    Persistent SQLite Conversation History Manager.
+    High-Performance Persistent SQLite + FTS5 Conversation History Manager.
     Stores user/assistant chat transcripts across application restarts.
-    Kept separate from personal fact memory (memories.db) and face profiles.
     """
 
     def __init__(self, db_dir: str = DEFAULT_HISTORY_DIR):
@@ -35,18 +34,25 @@ class ConversationHistory:
         self.db_path = os.path.join(self.db_dir, "conversations.db")
 
         self.current_turn_chunks: List[str] = []
+        self._tls = threading.local()
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        conn.row_factory = sqlite3.Row
-        return conn
+        if not hasattr(self._tls, "conn") or self._tls.conn is None:
+            conn = sqlite3.connect(self.db_path, timeout=15.0, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA foreign_keys=ON;")
+            conn.execute("PRAGMA cache_size=-32000;")
+            conn.row_factory = sqlite3.Row
+            self._tls.conn = conn
+        return self._tls.conn
 
     def _init_db(self):
-        conn = self._get_connection()
+        conn = sqlite3.connect(self.db_path, timeout=15.0)
         try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
             with conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -69,6 +75,18 @@ class ConversationHistory:
                         FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
                     );
                 """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_sess ON messages (session_id, timestamp);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_upd ON sessions (last_updated DESC);")
+
+                try:
+                    cursor.execute("""
+                        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                            text
+                        );
+                    """)
+                except Exception:
+                    pass
+
                 conn.commit()
             print(f"[HISTORY] Database initialized successfully at '{self.db_path}'.")
         except Exception as e:
@@ -77,14 +95,13 @@ class ConversationHistory:
             conn.close()
 
     def create_session(self, title: Optional[str] = None) -> str:
-        """ Creates a new conversation session record """
         now = time.time()
         sid = f"sess_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4]}"
         if not title:
             title = f"Conversation — {time.strftime('%b %d, %I:%M %p')}"
 
-        conn = self._get_connection()
         try:
+            conn = self._get_connection()
             with conn:
                 conn.execute(
                     "INSERT INTO sessions (session_id, title, start_timestamp, last_updated, message_count) VALUES (?, ?, ?, ?, ?)",
@@ -96,194 +113,183 @@ class ConversationHistory:
         except Exception as e:
             print(f"[HISTORY-ERROR] Error creating session: {e}")
             return sid
-        finally:
-            conn.close()
 
-    def add_message(self, session_id: str, sender: str, text: str, intent: str = "GENERAL") -> bool:
-        """
-        Adds a completed user or assistant message to the session.
-        Filters out sensitive credentials and lifecycle wake/sleep commands.
-        """
+    def log_message(self, session_id: str, sender: str, text: str, intent: str = "GENERAL") -> bool:
         if not text or not text.strip():
             return False
 
         clean_text = text.strip()
-
-        # Skip system lifecycle activation phrases in transcript history
-        if sender.lower() == "user" and clean_text.lower() in ["hey sg cube", "hey cube", "sg cube", "go to sleep", "stop listening"]:
-            return False
-
         if is_sensitive_info(clean_text):
-            print("[HISTORY-SECURITY] Blocked saving sensitive secret to conversation history.")
+            print("[HISTORY] Blocked saving sensitive credentials.")
             return False
 
+        clean_sender = sender.strip().lower()
         now = time.time()
-        conn = self._get_connection()
         try:
+            conn = self._get_connection()
             with conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO messages (session_id, timestamp, sender, text, intent) VALUES (?, ?, ?, ?, ?)",
-                    (session_id, now, sender.lower(), clean_text, intent)
+                    (session_id, now, clean_sender, clean_text, intent)
                 )
-
-                # Update session metadata and auto-generate title from first user query
-                cursor.execute("SELECT message_count, title FROM sessions WHERE session_id = ?", (session_id,))
-                row = cursor.fetchone()
-                if row:
-                    new_count = row["message_count"] + 1
-                    curr_title = row["title"]
-                    if new_count == 1 and sender.lower() == "user" and "Conversation —" in curr_title:
-                        # Generate clean title from first user question
-                        words = clean_text.split()[:5]
-                        curr_title = " ".join(words).title()
-                        if len(clean_text.split()) > 5:
-                            curr_title += "..."
-
-                    cursor.execute(
-                        "UPDATE sessions SET last_updated = ?, message_count = ?, title = ? WHERE session_id = ?",
-                        (now, new_count, curr_title, session_id)
-                    )
+                cursor.execute(
+                    "UPDATE sessions SET last_updated = ?, message_count = message_count + 1 WHERE session_id = ?",
+                    (now, session_id)
+                )
+                try:
+                    cursor.execute("INSERT INTO messages_fts (text) VALUES (?)", (clean_text,))
+                except Exception:
+                    pass
                 conn.commit()
-            print(f"[HISTORY] Saved [{sender.upper()}] message to session '{session_id}': '{clean_text[:40]}...'")
             return True
         except Exception as e:
-            print(f"[HISTORY-ERROR] Error saving message: {e}")
+            print(f"[HISTORY-ERROR] Error logging message: {e}")
             return False
-        finally:
-            conn.close()
 
-    def accumulate_assistant_chunk(self, chunk_text: str):
-        """ Accumulates incremental streaming speech fragments from Gemini Live """
+    def add_message(self, session_id: str, sender: str, text: str, intent: str = "GENERAL") -> bool:
+        """ Alias for log_message for API compatibility """
+        return self.log_message(session_id, sender, text, intent)
+
+    def append_turn_chunk(self, chunk_text: str):
         if chunk_text:
             self.current_turn_chunks.append(chunk_text)
 
-    def finalize_assistant_turn(self, session_id: str, intent: str = "GENERAL") -> Optional[str]:
-        """ Merges accumulated streaming chunks into ONE clean assistant message and saves it """
+    def accumulate_assistant_chunk(self, chunk_text: str):
+        """ Alias for append_turn_chunk """
+        self.append_turn_chunk(chunk_text)
+
+    def commit_turn(self, session_id: str, sender: str = "assistant", intent: str = "GENERAL") -> Optional[str]:
         if not self.current_turn_chunks:
             return None
-
-        full_response = "".join(self.current_turn_chunks).strip()
+        full_text = "".join(self.current_turn_chunks).strip()
         self.current_turn_chunks.clear()
-
-        if full_response:
-            self.add_message(session_id, "assistant", full_response, intent=intent)
-            return full_response
+        if full_text:
+            self.log_message(session_id, sender, full_text, intent)
+            return full_text
         return None
 
-    def get_session_messages(self, session_id: str) -> List[Dict]:
-        """ Retrieves all messages for a specified conversation session in chronological order """
-        conn = self._get_connection()
+    def finalize_assistant_turn(self, session_id: str, intent: str = "GENERAL") -> Optional[str]:
+        """ Alias for commit_turn """
+        return self.commit_turn(session_id, sender="assistant", intent=intent)
+
+    def list_all_sessions(self) -> List[Dict]:
+        """ Lists all history sessions """
+        return self.list_recent_sessions(limit=1000)
+
+    def get_session_messages(self, session_id: str, limit: int = 100) -> List[Dict]:
         try:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, timestamp, sender, text, intent FROM messages WHERE session_id = ? ORDER BY id ASC",
-                (session_id,)
+                "SELECT id, session_id, timestamp, sender, text, intent FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?",
+                (session_id, limit)
             )
-            return [dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
         except Exception as e:
-            print(f"[HISTORY-ERROR] Error fetching session messages: {e}")
+            print(f"[HISTORY-ERROR] Error getting messages: {e}")
             return []
-        finally:
-            conn.close()
 
-    def get_last_meaningful_message(self, session_id: Optional[str] = None) -> Optional[str]:
-        """ Retrieves the most recent meaningful user or assistant message to resolve contextual 'save this' references """
-        conn = self._get_connection()
+    def get_last_meaningful_message(self, session_id: Optional[str] = None, exclude_roles: Optional[List[str]] = None) -> Optional[str]:
+        exclude_roles = exclude_roles or []
         try:
+            conn = self._get_connection()
             cursor = conn.cursor()
             if session_id:
                 cursor.execute(
-                    "SELECT text FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 10",
+                    "SELECT text, sender FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT 10",
                     (session_id,)
                 )
             else:
-                cursor.execute("SELECT text FROM messages ORDER BY id DESC LIMIT 10")
+                cursor.execute(
+                    "SELECT text, sender FROM messages ORDER BY timestamp DESC LIMIT 10"
+                )
             rows = cursor.fetchall()
             for r in rows:
-                t = r["text"].strip()
-                t_lower = t.lower()
-                # Skip save commands themselves and short greetings
-                if any(t_lower.startswith(p) for p in ["save", "remember", "hey sg", "sg cube", "hello", "hi", "good"]):
-                    continue
-                if len(t.split()) >= 2:
-                    return t
+                sender = r["sender"]
+                text = r["text"].strip()
+                if sender not in exclude_roles and len(text) > 2:
+                    if not text.lower().startswith("save this") and not text.lower().startswith("remember this"):
+                        return text
             return None
         except Exception as e:
-            print(f"[HISTORY-ERROR] Error getting last message: {e}")
+            print(f"[HISTORY-ERROR] Error fetching last message: {e}")
             return None
-        finally:
-            conn.close()
 
-    def list_all_sessions(self) -> List[Dict]:
-        """ Retrieves all conversation sessions sorted by most recent """
-        conn = self._get_connection()
+    def list_recent_sessions(self, limit: int = 20) -> List[Dict]:
         try:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT session_id, title, start_timestamp, last_updated, message_count FROM sessions ORDER BY last_updated DESC"
+                "SELECT session_id, title, start_timestamp, last_updated, message_count FROM sessions ORDER BY last_updated DESC LIMIT ?",
+                (limit,)
             )
-            return [dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
         except Exception as e:
             print(f"[HISTORY-ERROR] Error listing sessions: {e}")
             return []
-        finally:
-            conn.close()
 
-    def search_history(self, query: str) -> List[Dict]:
-        """ Searches text of all saved conversation messages for matching query string """
-        if not query or not query.strip():
-            return self.list_all_sessions()
-
-        clean_query = f"%{query.strip().lower()}%"
-        conn = self._get_connection()
+    def search_history(self, keyword: str) -> List[Dict]:
+        if not keyword:
+            return []
         try:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT DISTINCT s.session_id, s.title, s.start_timestamp, s.last_updated, s.message_count
-                FROM sessions s
-                JOIN messages m ON s.session_id = m.session_id
-                WHERE LOWER(m.text) LIKE ? OR LOWER(s.title) LIKE ?
-                ORDER BY s.last_updated DESC
-            """, (clean_query, clean_query))
-            return [dict(row) for row in cursor.fetchall()]
+                SELECT m.id, m.session_id, m.timestamp, m.sender, m.text, m.intent
+                FROM messages_fts f
+                JOIN messages m ON m.id = f.rowid
+                WHERE messages_fts MATCH ?
+                LIMIT 50
+            """, (f'"{keyword.strip()}"*',))
+            rows = cursor.fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        except Exception:
+            pass
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, session_id, timestamp, sender, text, intent FROM messages WHERE text LIKE ? ORDER BY timestamp DESC LIMIT 50",
+                (f"%{keyword.strip()}%",)
+            )
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
         except Exception as e:
             print(f"[HISTORY-ERROR] Error searching history: {e}")
             return []
-        finally:
-            conn.close()
 
     def delete_session(self, session_id: str) -> bool:
-        """ Permanently deletes a single conversation session and its messages """
-        conn = self._get_connection()
         try:
+            conn = self._get_connection()
             with conn:
-                conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-                conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+                deleted = cursor.rowcount > 0
                 conn.commit()
-            print(f"[HISTORY] Deleted conversation session '{session_id}'.")
-            return True
+            return deleted
         except Exception as e:
             print(f"[HISTORY-ERROR] Error deleting session: {e}")
             return False
-        finally:
-            conn.close()
 
     def clear_all_history(self) -> int:
-        """ Permanently clears ALL conversation history records """
-        conn = self._get_connection()
         try:
+            conn = self._get_connection()
             with conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM sessions")
-                count = cursor.fetchone()[0]
-                cursor.execute("DELETE FROM messages;")
-                cursor.execute("DELETE FROM sessions;")
+                cursor.execute("DELETE FROM sessions")
+                count = cursor.rowcount
+                cursor.execute("DELETE FROM messages")
+                try:
+                    cursor.execute("DELETE FROM messages_fts")
+                except Exception:
+                    pass
                 conn.commit()
-            print(f"[HISTORY] Cleared all {count} conversation sessions from history database.")
             return count
         except Exception as e:
             print(f"[HISTORY-ERROR] Error clearing history: {e}")
             return 0
-        finally:
-            conn.close()

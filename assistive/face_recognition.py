@@ -10,9 +10,9 @@ DEFAULT_MODEL_DIR = os.path.join(PROJECT_ROOT, "data", "models")
 
 class FaceRecognizer:
     """
-    High-Accuracy Face Recognition Pipeline.
-    Combines YuNet CNN face detector + SFace deep embedding representation,
-    face quality gating, and temporal voting for smooth real-time performance.
+    High-Performance, Real-Time Face Recognition Pipeline.
+    Combines Deep YuNet CNN detector + SFace ArcFace embedding,
+    fast spatial-temporal tracking cache, and face quality gating.
     """
 
     def __init__(self, face_memory: FaceMemory, threshold: float = 0.55, greeting_cooldown: float = 30.0, models_dir: str = None):
@@ -29,9 +29,10 @@ class FaceRecognizer:
         # Track recent greetings per person name -> timestamp
         self.greeting_history: Dict[str, float] = {}
 
-        # Temporal Voting Rolling Window: list of {name: score} for last N frames
-        self.temporal_history: List[Dict[str, float]] = []
-        self.max_temporal_frames = 5
+        # Fast Spatial-Temporal Tracking Cache (bypasses heavy inference when face is stationary)
+        self._last_recognition_results: List[Dict] = []
+        self._last_recognition_time: float = 0.0
+        self._recognition_cache_ttl: float = 0.15  # 150ms cache window
 
         # 1. Initialize SOTA Deep YuNet Face Detector
         self.yunet = None
@@ -86,9 +87,7 @@ class FaceRecognizer:
                 if detections is not None and len(detections) > 0:
                     face_boxes = []
                     for det in detections:
-                        # det format: [x, y, w, h, x_re, y_re, x_le, y_le, x_nt, y_nt, x_rcm, y_rcm, x_lcm, y_lcm, score]
                         x, y, w, h = int(det[0]), int(det[1]), int(det[2]), int(det[3])
-                        # Clamp to frame boundary
                         x = max(0, min(x, w_img - 1))
                         y = max(0, min(y, h_img - 1))
                         w = max(1, min(w, w_img - x))
@@ -96,7 +95,6 @@ class FaceRecognizer:
                         if w >= 24 and h >= 24:
                             face_boxes.append((x, y, w, h))
                     if face_boxes:
-                        # Sort by area descending
                         face_boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
                         return face_boxes
             except Exception:
@@ -147,19 +145,29 @@ class FaceRecognizer:
 
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """
+        High-Performance Face Processing with Spatial-Temporal Tracking Cache.
         Detects, quality-gates, and recognizes all faces present in frame.
-        Returns list of face result dicts with keys:
-        'bbox', 'name', 'confidence', 'crop', 'quality_ok', 'quality_reason', 'should_greet'
         """
         results = []
         if frame is None or getattr(frame, 'size', 0) == 0:
             return results
 
-        face_boxes = self.detect_faces(frame)
         now = time.time()
+        face_boxes = self.detect_faces(frame)
+
+        # Spatial-Temporal Cache Hit Check
+        if (now - self._last_recognition_time) < self._recognition_cache_ttl and len(face_boxes) == len(self._last_recognition_results):
+            can_reuse = True
+            for i, (x, y, w, h) in enumerate(face_boxes):
+                cached = self._last_recognition_results[i]
+                cx, cy, cw, ch = cached["bbox"]
+                if abs(x - cx) > 25 or abs(y - cy) > 25:
+                    can_reuse = False
+                    break
+            if can_reuse:
+                return self._last_recognition_results
 
         for (x, y, w, h) in face_boxes:
-            # Crop face with protective margin
             h_pad = int(h * 0.15)
             w_pad = int(w * 0.15)
             y1 = max(0, y - h_pad)
@@ -201,17 +209,15 @@ class FaceRecognizer:
                 "should_greet": should_greet
             })
 
+        self._last_recognition_results = results
+        self._last_recognition_time = now
         return results
 
     def get_primary_face_crop(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Extracts the largest face crop from the current frame for enrollment.
-        """
         boxes = self.detect_faces(frame)
         if not boxes:
             return None
 
-        # Pick largest face by area (w * h)
         boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
         x, y, w, h = boxes[0]
 
@@ -225,9 +231,6 @@ class FaceRecognizer:
         return frame[y1:y2, x1:x2]
 
     def enroll_active_face(self, frame: np.ndarray, name: str) -> Dict:
-        """
-        Enrolls face present in current frame under specified person name with quality gating.
-        """
         if frame is None or getattr(frame, 'size', 0) == 0:
             return {"success": False, "message": "No visual frame available to enroll face."}
 
@@ -238,7 +241,6 @@ class FaceRecognizer:
                 "message": f"I couldn't detect a face to save. Please look directly into the camera so I can remember {name}."
             }
 
-        # Quality Gate Check
         quality_ok, quality_reason = self.face_memory.check_face_quality(crop)
         if not quality_ok:
             return {
@@ -247,6 +249,8 @@ class FaceRecognizer:
             }
 
         person_id = self.face_memory.save_person(name=name, face_crop=crop)
+        # Invalidate recognition cache on new enrollment
+        self._last_recognition_time = 0.0
         return {
             "success": True,
             "person_id": person_id,
@@ -255,8 +259,4 @@ class FaceRecognizer:
         }
 
     def detect_and_recognize_faces(self, frame: np.ndarray) -> List[Dict]:
-        """
-        Detects and recognizes all faces present in the given frame.
-        Returns list of face result dicts with keys: 'bbox', 'name', 'confidence', 'crop', 'should_greet'
-        """
         return self.process_frame(frame)
