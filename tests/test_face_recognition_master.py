@@ -21,23 +21,35 @@ class TestFaceRecognitionMaster(unittest.TestCase):
         cls.fm = cls.engine.face_memory
         cls.fr = cls.engine.face_recognizer
 
-        # Ensure reference test face exists for deterministic test suite
-        has_my_face = any("my face" in p["name"].lower() for p in cls.fm.profiles.values())
-        if not has_my_face:
+        # Ensure reference test face exists and is enrolled with matching embedding version
+        has_valid_my_face = False
+        for p in list(cls.fm.profiles.values()):
+            if "my face" in p["name"].lower():
+                if p["embedding"].shape[0] == cls.fm.embedding_dimension:
+                    has_valid_my_face = True
+                else:
+                    ref_path = os.path.join(p["dir_path"], "reference.jpg")
+                    if os.path.exists(ref_path):
+                        img = cv2.imread(ref_path)
+                        cls.fm.forget_person("My Face")
+                        cls.fm.save_person(name="My Face", face_crop=img)
+                        has_valid_my_face = True
+
+        if not has_valid_my_face:
             ref_crop = np.ones((128, 128, 3), dtype=np.uint8) * 120
             cv2.circle(ref_crop, (64, 64), 40, (220, 180, 150), -1)
             cls.fm.save_person(name="My Face", face_crop=ref_crop)
             cls.fm.load_all_profiles()
 
     def test_01_installed_profiles_exist_and_valid(self):
-        """ Verify enrolled profiles exist in installed app storage with valid 256-D embeddings """
+        """ Verify enrolled profiles exist in installed app storage with valid embeddings """
         print(f"\n[TEST 01] Stored profiles in {self.face_dir}: {list(self.fm.profiles.keys())}")
         self.assertGreater(len(self.fm.profiles), 0, "Enrolled face profiles must exist!")
         for pid, p in self.fm.profiles.items():
             self.assertIn("name", p)
             self.assertIn("embedding", p)
             emb = p["embedding"]
-            self.assertEqual(emb.shape, (256,), f"Profile {p['name']} embedding must be 256-D!")
+            self.assertIn(emb.shape[0], (128, 256), f"Profile {p['name']} embedding must be 128-D (v2) or 256-D (v1)!")
             self.assertAlmostEqual(float(np.linalg.norm(emb)), 1.0, places=3, msg="Embedding must be unit normalized!")
             print(f"  Profile: '{p['name']}' (ID: {pid}) -> Shape: {emb.shape}, Norm: {np.linalg.norm(emb):.4f}")
 
@@ -46,8 +58,8 @@ class TestFaceRecognitionMaster(unittest.TestCase):
         dummy_crop = np.ones((128, 128, 3), dtype=np.uint8) * 100
         emb1 = self.fm.compute_face_embedding(dummy_crop)
         emb2 = self.fm.compute_face_embedding(dummy_crop)
-        self.assertEqual(emb1.shape, (256,))
-        self.assertEqual(emb2.shape, (256,))
+        self.assertEqual(emb1.shape, emb2.shape)
+        self.assertIn(emb1.shape[0], (128, 256))
         self.assertTrue(np.allclose(emb1, emb2), "Embedding generation must be deterministic and identical!")
         print(f"[TEST 02] Embedding dimension = {emb1.shape[0]} (deterministic unit vector)")
 

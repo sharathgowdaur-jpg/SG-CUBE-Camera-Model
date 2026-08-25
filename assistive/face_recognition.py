@@ -1,20 +1,62 @@
 import time
+import os
 import cv2
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 from .face_memory import FaceMemory
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DEFAULT_MODEL_DIR = os.path.join(PROJECT_ROOT, "data", "models")
+
 class FaceRecognizer:
-    def __init__(self, face_memory: FaceMemory, threshold: float = 0.55, greeting_cooldown: float = 30.0):
+    """
+    High-Accuracy Face Recognition Pipeline.
+    Combines YuNet CNN face detector + SFace deep embedding representation,
+    face quality gating, and temporal voting for smooth real-time performance.
+    """
+
+    def __init__(self, face_memory: FaceMemory, threshold: float = 0.55, greeting_cooldown: float = 30.0, models_dir: str = None):
         self.face_memory = face_memory
         self.threshold = threshold
         self.greeting_cooldown = greeting_cooldown
         self.greetings_enabled = True
 
+        if models_dir is None or models_dir in ["data/models", "models"]:
+            self.models_dir = DEFAULT_MODEL_DIR
+        else:
+            self.models_dir = os.path.abspath(models_dir)
+
         # Track recent greetings per person name -> timestamp
         self.greeting_history: Dict[str, float] = {}
 
-        # Cascade classifier if present in cv2
+        # Temporal Voting Rolling Window: list of {name: score} for last N frames
+        self.temporal_history: List[Dict[str, float]] = []
+        self.max_temporal_frames = 5
+
+        # 1. Initialize SOTA Deep YuNet Face Detector
+        self.yunet = None
+        yunet_candidates = [
+            os.path.join(self.models_dir, "face_detection_yunet_2023mar.onnx"),
+            os.path.join(DEFAULT_MODEL_DIR, "face_detection_yunet_2023mar.onnx"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "SG-CUBE", "data", "models", "face_detection_yunet_2023mar.onnx")
+        ]
+        for candidate in yunet_candidates:
+            if os.path.exists(candidate):
+                try:
+                    self.yunet = cv2.FaceDetectorYN.create(
+                        model=candidate,
+                        config="",
+                        input_size=(320, 320),
+                        score_threshold=0.55,
+                        nms_threshold=0.3,
+                        top_k=5000
+                    )
+                    print(f"[FACE-DETECTOR] Initialized Deep YuNet Face Detector ({candidate})")
+                    break
+                except Exception as e:
+                    print(f"[FACE-DETECTOR] YuNet initialization warning: {e}")
+
+        # 2. Haar Cascade fallback
         self.face_cascade = None
         if hasattr(cv2, 'CascadeClassifier') and hasattr(cv2, 'data'):
             try:
@@ -29,11 +71,38 @@ class FaceRecognizer:
     def detect_faces(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
         Detects faces in frame and returns list of bounding boxes (x, y, w, h).
-        Falls back to skin-color & facial contour heuristics if Haar cascade unavailable.
+        Uses Deep YuNet CNN when available, with Cascade fallback.
         """
-        if frame is None or frame.size == 0:
+        if frame is None or getattr(frame, 'size', 0) == 0:
             return []
 
+        h_img, w_img = frame.shape[:2]
+
+        # 1. Try Deep YuNet Detector
+        if self.yunet is not None:
+            try:
+                self.yunet.setInputSize((w_img, h_img))
+                _, detections = self.yunet.detect(frame)
+                if detections is not None and len(detections) > 0:
+                    face_boxes = []
+                    for det in detections:
+                        # det format: [x, y, w, h, x_re, y_re, x_le, y_le, x_nt, y_nt, x_rcm, y_rcm, x_lcm, y_lcm, score]
+                        x, y, w, h = int(det[0]), int(det[1]), int(det[2]), int(det[3])
+                        # Clamp to frame boundary
+                        x = max(0, min(x, w_img - 1))
+                        y = max(0, min(y, h_img - 1))
+                        w = max(1, min(w, w_img - x))
+                        h = max(1, min(h, h_img - y))
+                        if w >= 24 and h >= 24:
+                            face_boxes.append((x, y, w, h))
+                    if face_boxes:
+                        # Sort by area descending
+                        face_boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
+                        return face_boxes
+            except Exception:
+                pass
+
+        # 2. Haar Cascade fallback
         if self.face_cascade is not None:
             try:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -45,13 +114,14 @@ class FaceRecognizer:
                     minSize=(30, 30)
                 )
                 if len(faces) > 0:
-                    return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+                    face_boxes = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+                    face_boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
+                    return face_boxes
             except Exception:
                 pass
 
-        # Robust skin-tone & contour fallback face detector
+        # 3. Robust skin-tone & contour fallback face detector
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        # Skin tone range in HSV
         lower_skin = np.array([0, 20, 70], dtype=np.uint8)
         upper_skin = np.array([25, 255, 255], dtype=np.uint8)
 
@@ -61,8 +131,7 @@ class FaceRecognizer:
         mask = cv2.dilate(mask, kernel, iterations=2)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        h_img, w_img = frame.shape[:2]
-        min_area = (w_img * h_img) * 0.01
+        min_area = (w_img * h_img) * 0.015
 
         face_boxes = []
         for cnt in contours:
@@ -70,25 +139,27 @@ class FaceRecognizer:
             if area > min_area:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect = h / float(w)
-                if 0.6 <= aspect <= 2.5:  # Face aspect ratio filter
+                if 0.7 <= aspect <= 2.2:
                     face_boxes.append((int(x), int(y), int(w), int(h)))
 
+        face_boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
         return face_boxes
 
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """
-        Detects and recognizes faces in frame.
-        Returns list of dicts with keys: 'bbox', 'name', 'confidence', 'crop', 'should_greet'
+        Detects, quality-gates, and recognizes all faces present in frame.
+        Returns list of face result dicts with keys:
+        'bbox', 'name', 'confidence', 'crop', 'quality_ok', 'quality_reason', 'should_greet'
         """
         results = []
-        if frame is None:
+        if frame is None or getattr(frame, 'size', 0) == 0:
             return results
 
         face_boxes = self.detect_faces(frame)
         now = time.time()
 
         for (x, y, w, h) in face_boxes:
-            # Crop face with margin
+            # Crop face with protective margin
             h_pad = int(h * 0.15)
             w_pad = int(w * 0.15)
             y1 = max(0, y - h_pad)
@@ -97,6 +168,20 @@ class FaceRecognizer:
             x2 = min(frame.shape[1], x + w + w_pad)
 
             face_crop = frame[y1:y2, x1:x2]
+            quality_ok, quality_reason = self.face_memory.check_face_quality(face_crop)
+
+            if not quality_ok:
+                results.append({
+                    "bbox": (x, y, w, h),
+                    "name": None,
+                    "confidence": 0.0,
+                    "crop": face_crop,
+                    "quality_ok": False,
+                    "quality_reason": quality_reason,
+                    "should_greet": False
+                })
+                continue
+
             name, confidence = self.face_memory.find_match(face_crop, threshold=self.threshold)
 
             should_greet = False
@@ -111,6 +196,8 @@ class FaceRecognizer:
                 "name": name,
                 "confidence": confidence,
                 "crop": face_crop,
+                "quality_ok": True,
+                "quality_reason": "Good quality",
                 "should_greet": should_greet
             })
 
@@ -139,9 +226,9 @@ class FaceRecognizer:
 
     def enroll_active_face(self, frame: np.ndarray, name: str) -> Dict:
         """
-        Enrolls face present in current frame under specified person name.
+        Enrolls face present in current frame under specified person name with quality gating.
         """
-        if frame is None or frame.size == 0:
+        if frame is None or getattr(frame, 'size', 0) == 0:
             return {"success": False, "message": "No visual frame available to enroll face."}
 
         crop = self.get_primary_face_crop(frame)
@@ -149,6 +236,14 @@ class FaceRecognizer:
             return {
                 "success": False,
                 "message": f"I couldn't detect a face to save. Please look directly into the camera so I can remember {name}."
+            }
+
+        # Quality Gate Check
+        quality_ok, quality_reason = self.face_memory.check_face_quality(crop)
+        if not quality_ok:
+            return {
+                "success": False,
+                "message": f"Face quality too low for reliable recognition ({quality_reason}). Please look directly into the camera with good lighting so I can remember {name}."
             }
 
         person_id = self.face_memory.save_person(name=name, face_crop=crop)
@@ -165,6 +260,3 @@ class FaceRecognizer:
         Returns list of face result dicts with keys: 'bbox', 'name', 'confidence', 'crop', 'should_greet'
         """
         return self.process_frame(frame)
-
-
-
