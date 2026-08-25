@@ -633,6 +633,28 @@ class SGCubeApp:
         self.root.configure(bg=COLOR_BG_PRIMARY)
         self.root.option_add("*Font", ("Segoe UI", 10))
 
+        # Windows Taskbar Icon & AppUserModelID setup
+        if os.name == 'nt':
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SGCUBE.Assistant.2.4.6")
+            except Exception:
+                pass
+
+        # Set Window Icon
+        _app_dir = os.path.abspath(os.path.dirname(__file__))
+        _icon_candidates = [
+            os.path.join(_app_dir, "assets", "SG-CUBE.ico"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "SG-CUBE", "assets", "SG-CUBE.ico")
+        ]
+        for _ic in _icon_candidates:
+            if os.path.exists(_ic):
+                try:
+                    self.root.iconbitmap(_ic)
+                    break
+                except Exception:
+                    pass
+
         # Instantiate Assistive Vision Engine
         self.engine = VisionEngine(data_dir="data")
 

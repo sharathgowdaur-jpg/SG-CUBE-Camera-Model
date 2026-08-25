@@ -159,6 +159,12 @@ class SGCubeWakeListener:
         self.icon = pystray.Icon("SGCubeWakeListener", image, "SG CUBE Wake Listener", menu)
 
     def _create_icon_image(self, color_hex="#00f2fe") -> Image.Image:
+        icon_path = os.path.join(self.app_dir, "assets", "SG-CUBE.png")
+        if os.path.exists(icon_path):
+            try:
+                return Image.open(icon_path).resize((64, 64), Image.Resampling.LANCZOS)
+            except Exception:
+                pass
         img = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         draw.ellipse((8, 8, 56, 56), fill=color_hex, outline="#161922", width=3)
