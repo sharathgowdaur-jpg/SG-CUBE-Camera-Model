@@ -2412,7 +2412,7 @@ class SGCubeApp:
             print(f"[ERROR] AI worker thread exception: {e}")
             curr_key_num = self.engine.key_manager.active_key_num
             if curr_key_num:
-                next_key = self.engine.key_manager.get_next_failover_key(curr_key_num)
+                next_key = self.engine.key_manager.get_next_failover_key(curr_key_num, error=e)
                 if next_key and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
                     next_num, next_val = next_key
                     print(f"[FAILOVER] Key {curr_key_num} failed -> Failing over to Key {next_num}")

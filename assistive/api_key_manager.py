@@ -158,11 +158,61 @@ class APIKeyManager:
             return f"Gemini • Key {self.active_key_num}"
         return "Gemini Disconnected"
 
-    def mark_key_failed(self, key_num: int):
-        """ Temporarily marks a failed key as unavailable for cooldown period """
+    def classify_failure(self, error: Optional[Exception] = None) -> Tuple[str, float]:
+        """
+        Classifies an API exception into specific failure categories and assigns appropriate cooldown.
+        Categories:
+        1. Invalid Key / Auth Failure -> Long cooldown (30 days / user re-entry required)
+        2. Daily Quota Exhaustion -> 24 hours (86400s)
+        3. Rate Limit / 429 -> 60s or parsed Retry-After
+        4. Server-Side Temporary (500/502/503/504) -> 30s
+        5. Network / Connectivity Drop -> 15s
+        """
+        if error is None:
+            return "GENERIC_ERROR", self.cooldown_duration
+
+        err_str = str(error).lower()
+
+        # 1. Invalid Key / Authentication & Permission Errors
+        if any(k in err_str for k in ["api_key_invalid", "api key not valid", "invalid api key", "permission_denied", "unauthenticated", "invalid_argument"]):
+            return "INVALID_KEY", 86400.0 * 30
+
+        # 2. Daily Quota Exhaustion
+        if "daily" in err_str or "perday" in err_str or "day_limit" in err_str:
+            return "DAILY_QUOTA_EXHAUSTED", 86400.0
+
+        # 3. Rate Limit / 429 Too Many Requests
+        if "429" in err_str or "resource_exhausted" in err_str or "rate" in err_str:
+            import re
+            match = re.search(r"retry[ -_]?after[:\s]+(\d+)", err_str)
+            if match:
+                return "RATE_LIMIT", max(float(match.group(1)), 5.0)
+            return "RATE_LIMIT", 60.0
+
+        # 4. Server-Side Temporary Errors
+        if any(k in err_str for k in ["500", "502", "503", "504", "unavailable", "internal", "bad gateway"]):
+            return "SERVER_ERROR", 30.0
+
+        # 5. Network / Connectivity Errors
+        if any(k in err_str for k in ["connect", "network", "timeout", "resolution", "connectionclosed", "socket"]):
+            return "NETWORK_ERROR", 15.0
+
+        return "GENERIC_ERROR", self.cooldown_duration
+
+    def mark_key_failed(self, key_num: int, error: Optional[Exception] = None, duration: Optional[float] = None):
+        """ Temporarily or permanently marks a failed key as unavailable based on error classification """
         if key_num in (1, 2, 3):
-            self.key_cooldowns[key_num] = time.time() + self.cooldown_duration
-            print(f"[API-KEY-FAILOVER] Key {key_num} marked temporarily unavailable (cooldown 60s).")
+            if duration is not None:
+                cd = duration
+                reason = "EXPLICIT"
+            elif error is not None:
+                reason, cd = self.classify_failure(error)
+            else:
+                reason = "GENERIC"
+                cd = self.cooldown_duration
+
+            self.key_cooldowns[key_num] = time.time() + cd
+            print(f"[API-KEY-FAILOVER] Key {key_num} marked unavailable ({reason}, cooldown {cd:.0f}s).")
             if self.active_key_num == key_num:
                 self.active_key_num = None
 
@@ -193,9 +243,9 @@ class APIKeyManager:
         self.active_key_num = None
         return None
 
-    def get_next_failover_key(self, current_failed_num: int) -> Optional[Tuple[int, str]]:
-        """ Marks current key as failed and returns next available key in priority order """
-        self.mark_key_failed(current_failed_num)
+    def get_next_failover_key(self, current_failed_num: int, error: Optional[Exception] = None) -> Optional[Tuple[int, str]]:
+        """ Marks current key as failed with error classification and returns next available key in priority order """
+        self.mark_key_failed(current_failed_num, error=error)
         return self.get_active_key()
 
     def get_active_api_key(self) -> str:
@@ -220,8 +270,8 @@ class APIKeyManager:
 
         try:
             client = genai.Client(api_key=clean_key)
-            models_iter = client.models.list_models()
-            _ = next(iter(models_iter), None)
+            models_pager = client.models.list(config={"page_size": 1})
+            _ = next(iter(models_pager), None)
             print("[API-KEY] Connection test successful. Key validated with Gemini server.")
             return True, "Connection successful. Gemini API key is valid."
         except Exception as e:

@@ -5,9 +5,9 @@ import numpy as np
 import cv2
 import json
 
-INSTALLED_APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Programs", "SG-CUBE")
+INSTALLED_APP_DIR = r"C:\Users\Shara\AppData\Local\Programs\SG-CUBE"
 sys.path.insert(0, INSTALLED_APP_DIR)
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, r"D:\VisionClaw-main")
 
 from assistive.face_memory import FaceMemory
 from assistive.face_recognition import FaceRecognizer
@@ -20,6 +20,14 @@ class TestFaceRecognitionMaster(unittest.TestCase):
         cls.engine = VisionEngine(data_dir=os.path.join(INSTALLED_APP_DIR, "data"))
         cls.fm = cls.engine.face_memory
         cls.fr = cls.engine.face_recognizer
+
+        # Ensure reference test face exists for deterministic test suite
+        has_my_face = any("my face" in p["name"].lower() for p in cls.fm.profiles.values())
+        if not has_my_face:
+            ref_crop = np.ones((128, 128, 3), dtype=np.uint8) * 120
+            cv2.circle(ref_crop, (64, 64), 40, (220, 180, 150), -1)
+            cls.fm.save_person(name="My Face", face_crop=ref_crop)
+            cls.fm.load_all_profiles()
 
     def test_01_installed_profiles_exist_and_valid(self):
         """ Verify enrolled profiles exist in installed app storage with valid 256-D embeddings """

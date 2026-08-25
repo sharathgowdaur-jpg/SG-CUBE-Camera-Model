@@ -87,5 +87,54 @@ class TestAPIKeyFailover(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("invalid", msg.lower())
 
+    def test_08_error_classification_invalid_key(self):
+        err = Exception("400 INVALID_ARGUMENT: API_KEY_INVALID. Please pass a valid API key.")
+        reason, cd = self.mgr.classify_failure(err)
+        self.assertEqual(reason, "INVALID_KEY")
+        self.assertGreaterEqual(cd, 86400.0)
+
+    def test_09_error_classification_daily_quota(self):
+        err = Exception("429 RESOURCE_EXHAUSTED: Daily quota limit reached for GenerateContentRequestsPerDayPerProject")
+        reason, cd = self.mgr.classify_failure(err)
+        self.assertEqual(reason, "DAILY_QUOTA_EXHAUSTED")
+        self.assertGreaterEqual(cd, 86400.0)
+
+    def test_10_error_classification_rate_limit_and_retry_after(self):
+        err1 = Exception("429 RESOURCE_EXHAUSTED: Rate limit exceeded.")
+        reason1, cd1 = self.mgr.classify_failure(err1)
+        self.assertEqual(reason1, "RATE_LIMIT")
+        self.assertEqual(cd1, 60.0)
+
+        err2 = Exception("429 Too Many Requests. Retry-After: 45")
+        reason2, cd2 = self.mgr.classify_failure(err2)
+        self.assertEqual(reason2, "RATE_LIMIT")
+        self.assertEqual(cd2, 45.0)
+
+    def test_11_error_classification_server_error(self):
+        err = Exception("503 UNAVAILABLE: The service is temporarily overloaded.")
+        reason, cd = self.mgr.classify_failure(err)
+        self.assertEqual(reason, "SERVER_ERROR")
+        self.assertEqual(cd, 30.0)
+
+    def test_12_error_classification_network_error(self):
+        err = Exception("Connection closed prematurely: socket timeout")
+        reason, cd = self.mgr.classify_failure(err)
+        self.assertEqual(reason, "NETWORK_ERROR")
+        self.assertEqual(cd, 15.0)
+
+    def test_13_re_enable_on_key_update(self):
+        self.mgr.set_key(1, "AIzaSyTestKey1_ValidFormatForTest123")
+        err = Exception("400 API_KEY_INVALID")
+        self.mgr.mark_key_failed(1, error=err)
+        self.assertIn(1, self.mgr.key_cooldowns)
+        self.assertIsNone(self.mgr.get_active_key())
+
+        # Updating key in settings immediately re-enables it
+        self.mgr.set_key(1, "AIzaSyTestKey1_CorrectedKeyString999")
+        self.assertNotIn(1, self.mgr.key_cooldowns)
+        active = self.mgr.get_active_key()
+        self.assertIsNotNone(active)
+        self.assertEqual(active[0], 1)
+
 if __name__ == "__main__":
     unittest.main()
