@@ -14,7 +14,7 @@ from .object_detector import ObjectDetector
 from .safety_analyzer import SafetyAnalyzer
 from .scene_analyzer import SceneAnalyzer
 from .environment_monitor import EnvironmentMonitor
-from .command_router import CommandRouter
+from .command_router import CommandRouter, OFFICIAL_INTRODUCTION
 from .response_manager import ResponseManager
 from .memory_manager import MemoryManager
 from .conversation_history import ConversationHistory
@@ -402,6 +402,11 @@ class VisionEngine:
             prod_res = self.product_scanner.scan_product_label(self.current_frame, ocr_text=ocr_text)
             resp = prod_res["description"]
             self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "INTRODUCE":
+            resp = OFFICIAL_INTRODUCTION
+            self.response_manager.add_response(resp, priority=1, force=True)
             return resp
 
         elif intent == "SLEEP":
