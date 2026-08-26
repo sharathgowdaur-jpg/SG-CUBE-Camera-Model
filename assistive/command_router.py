@@ -1,7 +1,7 @@
 import re
 from typing import Dict, Optional, Tuple
 
-OFFICIAL_INTRODUCTION = """Hello everyone!
+OFFICIAL_INTRODUCTION = """Hello everyone! 👋
 
 My name is SG CUBE.
 
