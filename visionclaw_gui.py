@@ -2899,20 +2899,14 @@ class SGCubeApp:
                                 result_content = {"recalled_memory": memory_fact or "No memory saved matching query."}
 
                             try:
-                                await session.send_client_content(
-                                    turns=[
-                                        types.Content(
-                                            role="tool",
-                                            parts=[
-                                                types.Part.from_function_response(
-                                                    name=fn_name,
-                                                    response={"result": result_content},
-                                                    id=call_id
-                                                )
-                                            ]
+                                await session.send_tool_response(
+                                    function_responses=[
+                                        types.FunctionResponse(
+                                            name=fn_name,
+                                            response={"result": result_content},
+                                            id=call_id
                                         )
-                                    ],
-                                    end_of_turn=True
+                                    ]
                                 )
                             except Exception as te:
                                 print(f"[TOOL-RESPONSE] Error sending tool response: {te}")
