@@ -1,4 +1,6 @@
-google-genai>=1.0.0
+# 1.9.0 added types.AudioTranscriptionConfig and 1.10.0 added client.aio.aclose(),
+# both used by the Live session in visionclaw_gui.py. Verified on 2.10.0.
+google-genai>=1.10.0
 opencv-python>=4.9.0
 sounddevice>=0.4.6
 numpy>=1.26.0

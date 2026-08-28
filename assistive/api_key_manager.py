@@ -30,14 +30,70 @@ def _resolve_pref_dir(pref_dir: Optional[str] = None) -> str:
                 return p2
     return DEFAULT_PREF_DIR
 
+# Stored credentials carry the scheme that produced them, so a file written by an
+# older build (plain base64, no prefix) still loads and is upgraded in place.
+_DPAPI_PREFIX = "dpapi:"
+
+# Extra entropy binds a blob to this application: a DPAPI blob produced by some
+# other program running as the same user cannot be swapped into the .dat file.
+_DPAPI_ENTROPY = b"SG-CUBE::multi_api_credentials::v2"
+
+_fallback_warning_shown = False
+
+def _dpapi_available() -> bool:
+    """ True when Windows DPAPI can be used to encrypt credentials """
+    if os.name != "nt":
+        return False
+    try:
+        import win32crypt  # noqa: F401
+    except Exception:
+        return False
+    return True
+
 def _obfuscate(text: str) -> str:
+    """
+    Encrypts a credential for storage.
+
+    On Windows this is DPAPI (CryptProtectData), which ties the ciphertext to the
+    logged-in Windows account: copying multi_api_credentials.dat to another user or
+    machine yields nothing. Where DPAPI is unavailable it falls back to the previous
+    base64 encoding and says so once, because base64 is encoding, not encryption.
+    """
+    global _fallback_warning_shown
     if not text:
         return ""
+
+    if _dpapi_available():
+        try:
+            import win32crypt
+            blob = win32crypt.CryptProtectData(
+                text.encode("utf-8"), "SG CUBE API key", _DPAPI_ENTROPY, None, None, 0
+            )
+            return _DPAPI_PREFIX + base64.b64encode(blob).decode("utf-8")
+        except Exception as e:
+            print(f"[API-KEY-WARN] DPAPI encryption failed ({e}); falling back to base64.")
+    elif not _fallback_warning_shown:
+        _fallback_warning_shown = True
+        print("[API-KEY-WARN] DPAPI unavailable - credentials are base64-encoded, not encrypted.")
+
     return base64.b64encode(text.encode("utf-8")).decode("utf-8")
 
 def _deobfuscate(encoded: str) -> str:
+    """ Reads a stored credential written by either scheme """
     if not encoded:
         return ""
+
+    if encoded.startswith(_DPAPI_PREFIX):
+        try:
+            import win32crypt
+            raw = base64.b64decode(encoded[len(_DPAPI_PREFIX):].encode("utf-8"))
+            _, plain = win32crypt.CryptUnprotectData(raw, _DPAPI_ENTROPY, None, None, 0)
+            return plain.decode("utf-8")
+        except Exception:
+            # Different Windows account, different machine, or a corrupt blob. The
+            # key is unrecoverable here by design — the user re-enters it in Settings.
+            return ""
+
     try:
         return base64.b64decode(encoded.encode("utf-8")).decode("utf-8")
     except Exception:
@@ -67,6 +123,8 @@ class APIKeyManager:
     def load_all_credentials(self):
         """ Loads all saved API keys and priority settings securely from disk """
         if os.path.exists(self.cred_file):
+            needs_upgrade = False
+            all_recovered = True
             try:
                 with open(self.cred_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -76,14 +134,25 @@ class APIKeyManager:
                             k_num = int(k_str)
                             if k_num in (1, 2, 3):
                                 self.keys[k_num] = _deobfuscate(val)
+                                if val and not val.startswith(_DPAPI_PREFIX):
+                                    needs_upgrade = True
+                                if val and not self.keys[k_num]:
+                                    all_recovered = False
                         except Exception:
-                            pass
+                            all_recovered = False
 
                     prio_data = data.get("priority", [1, 2, 3])
                     if isinstance(prio_data, list) and all(p in (1, 2, 3) for p in prio_data):
                         self.priority = prio_data
             except Exception as e:
                 print(f"[API-KEY-ERROR] Error loading multi-key file: {e}")
+
+            # One-time in-place upgrade of a base64 file left by an older build. Runs
+            # after the read handle is closed, and only when every stored value came
+            # back intact, so a decode failure can never overwrite a key with a blank.
+            if needs_upgrade and all_recovered and any(self.keys.values()) and _dpapi_available():
+                if self.save_all_credentials():
+                    print("[API-KEY] Stored credentials upgraded to DPAPI encryption.")
 
         # Migration / fallback to single legacy key or environment variable
         if not any(self.keys.values()):
