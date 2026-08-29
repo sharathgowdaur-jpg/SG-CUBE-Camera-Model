@@ -9,23 +9,14 @@ class TestOfficialIntroduction(unittest.TestCase):
 
     def test_official_introduction_exact_text(self):
         """ Verify official introduction contains exact required sections, emojis, and phrases """
-        self.assertTrue(OFFICIAL_INTRODUCTION.startswith("Hello everyone!"))
-        self.assertTrue(OFFICIAL_INTRODUCTION.endswith("Thank you!"))
+        self.assertTrue(OFFICIAL_INTRODUCTION.startswith("Hi! I’m SG CUBE — your AI vision companion. 👋"))
+        self.assertTrue(OFFICIAL_INTRODUCTION.endswith("See. Understand. Remember. Assist. That’s SG CUBE."))
         
         # Verify key required sentences from official spec
-        self.assertIn("My name is SG CUBE.", OFFICIAL_INTRODUCTION)
-        self.assertIn("The name sounds complicated, but luckily, I don’t give math exams. 😄", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘What can I help you with?’", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘Where did I keep my phone?’", OFFICIAL_INTRODUCTION)
-        self.assertIn("…while holding the phone in their hand. 😂", OFFICIAL_INTRODUCTION)
-        self.assertIn("I was designed especially with visually impaired and blind users in mind.", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘SG CUBE, what do you see?’", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘SG CUBE, read this.’", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘Remember my favorite color is blue.’", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘Go to sleep.’", OFFICIAL_INTRODUCTION)
-        self.assertIn("‘Hey SG CUBE.’", OFFICIAL_INTRODUCTION)
-        self.assertIn("Just don’t ask me where your keys are…", OFFICIAL_INTRODUCTION)
-        self.assertIn("I’m still working on that one. 😄", OFFICIAL_INTRODUCTION)
+        self.assertIn("I can see, listen, remember, and help you understand the world around you.", OFFICIAL_INTRODUCTION)
+        self.assertIn("I can recognize faces, read text, find objects, detect currency, remember useful information, and talk with you naturally.", OFFICIAL_INTRODUCTION)
+        self.assertIn("Basically, I’m like a helpful friend… except I never ask, ‘Where did I keep my phone?’ while holding it in my hand. 😂", OFFICIAL_INTRODUCTION)
+        self.assertIn("See. Understand. Remember. Assist. That’s SG CUBE.", OFFICIAL_INTRODUCTION)
 
     def test_command_routing_introduce_queries(self):
         """ Verify natural language self-introduction queries route to INTRODUCE intent """

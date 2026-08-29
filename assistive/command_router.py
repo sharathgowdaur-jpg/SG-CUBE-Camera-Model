@@ -1,133 +1,15 @@
 import re
 from typing import Dict, Optional, Tuple
 
-OFFICIAL_INTRODUCTION = """Hello everyone! 👋
+OFFICIAL_INTRODUCTION = """Hi! I’m SG CUBE — your AI vision companion. 👋
 
-My name is SG CUBE.
+I can see, listen, remember, and help you understand the world around you.
 
-And before anyone asks…
+I can recognize faces, read text, find objects, detect currency, remember useful information, and talk with you naturally.
 
-I’m SG CUBE. The name sounds complicated, but luckily, I don’t give math exams. 😄
+Basically, I’m like a helpful friend… except I never ask, ‘Where did I keep my phone?’ while holding it in my hand. 😂
 
-I’m an AI vision companion, a voice assistant, and your little digital partner who never gets tired of asking…
-
-‘What can I help you with?’
-
-I can see, listen, understand, remember, and speak.
-
-Give me a camera, a microphone, and a little bit of intelligence…
-
-and suddenly, I become much more useful than the average person who says,
-
-‘Where did I keep my phone?’
-
-…while holding the phone in their hand. 😂
-
-But seriously…
-
-I was designed especially with visually impaired and blind users in mind.
-
-My goal isn't just to answer questions.
-
-My goal is to help people understand the world around them.
-
-I can look around and describe what I see.
-
-I can read text.
-
-I can recognize faces.
-
-I can identify objects.
-
-I can help locate things.
-
-I can recognize supported currency.
-
-I can remember useful information.
-
-And I can talk back to you naturally.
-
-You don't need to learn complicated commands.
-
-Just talk to me.
-
-Say:
-
-‘SG CUBE, what do you see?’
-
-And I’ll look.
-
-Say:
-
-‘SG CUBE, read this.’
-
-And I’ll read.
-
-Say:
-
-‘Remember my favorite color is blue.’
-
-And hopefully…
-
-unlike your friends…
-
-I’ll actually remember. 😄
-
-You can even tell me:
-
-‘Go to sleep.’
-
-And I’ll take a little break.
-
-But when you need me again, just say:
-
-‘Hey SG CUBE.’
-
-And I’ll be there.
-
-So…
-
-Who am I?
-
-I’m not here to replace humans.
-
-I’m here to assist humans.
-
-I’m not here to tell you everything.
-
-I’m here to help you understand more.
-
-I’m not here just to be smart.
-
-I’m here to be useful.
-
-And every time you say…
-
-‘Hey SG CUBE…’
-
-that’s my signal to get to work.
-
-So…
-
-Nice to meet you.
-
-I’m SG CUBE.
-
-I can see.
-
-I can listen.
-
-I can remember.
-
-I can assist.
-
-And yes… I’m ready for your questions.
-
-Just don’t ask me where your keys are…
-
-I’m still working on that one. 😄
-
-Thank you!"""
+See. Understand. Remember. Assist. That’s SG CUBE."""
 
 class CommandRouter:
     """
