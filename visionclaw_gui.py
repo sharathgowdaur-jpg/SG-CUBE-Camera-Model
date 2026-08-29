@@ -2437,17 +2437,19 @@ class SGCubeApp:
 
         except Exception as e:
             print(f"[ERROR] AI worker thread exception: {e}")
-            curr_key_num = self.engine.key_manager.active_key_num
-            if curr_key_num:
-                next_key = self.engine.key_manager.get_next_failover_key(curr_key_num, error=e)
-                if next_key and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
-                    next_num, next_val = next_key
-                    print(f"[FAILOVER] Key {curr_key_num} failed -> Failing over to Key {next_num}")
-                    self.stop_ai()
+            curr_key_num = self.engine.key_manager.active_key_num or 1
+            next_key = self.engine.key_manager.get_next_failover_key(curr_key_num, error=e)
+            if next_key and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
+                next_num, next_val = next_key
+                print(f"[FAILOVER] Key {curr_key_num} failed -> Failing over to Key {next_num}")
+                self.stop_ai()
+                try:
                     self.root.after(500, lambda: self.start_ai(next_val))
-                else:
-                    print("[FAILOVER] All configured Gemini API keys failed or on cooldown.")
-                    self.set_state("DISCONNECTED")
+                except Exception:
+                    threading.Timer(0.5, lambda: self.start_ai(next_val)).start()
+            else:
+                print("[FAILOVER] All configured Gemini API keys failed or on cooldown.")
+                self.set_state("DISCONNECTED")
             self.gui_queue.put(("AI_STOPPED", str(e)))
         finally:
             if mic_stream:
@@ -2615,9 +2617,11 @@ class SGCubeApp:
         )
 
         model_name = "gemini-3.1-flash-live-preview"
+        session_established = False
 
         try:
             async with client.aio.live.connect(model=model_name, config=config) as session:
+                session_established = True
                 print(f"[SESSION] Gemini Live WebSocket connected (session_id={session_id}).")
                 if self.ai_running and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
                     self.set_state("LISTENING")
@@ -2660,16 +2664,26 @@ class SGCubeApp:
                 await asyncio.gather(mic_task, video_task, receive_task, return_exceptions=True)
 
         except Exception as e:
+            if not self.ai_running or self.current_state in ("SLEEPING", "STOPPED", "CLOSED"):
+                return
+
+            print(f"[SESSION] Live session exception (session_id={session_id}, established={session_established}): {e}")
+
+            # If the session was NEVER established, or if the failure is classified as invalid key / quota exhaustion,
+            # raise the exception to let _ai_worker_thread trigger multi-key failover!
+            reason, _ = self.engine.key_manager.classify_failure(e)
+            if not session_established or reason in ("INVALID_KEY", "DAILY_QUOTA_EXHAUSTED"):
+                raise e
+
+            # For established sessions experiencing a transient network disconnect, attempt reconnect
+            self.set_state("RECONNECTING")
+            await asyncio.sleep(1.5)
             if self.ai_running and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
-                print(f"[SESSION] Live session disconnected (session_id={session_id}): {e}")
-                self.set_state("RECONNECTING")
-                await asyncio.sleep(1.5)
-                if self.ai_running and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
-                    with self.session_lock:
-                        if self.active_session_id == session_id:
-                            self.active_session_id = None
-                    active_key = self.engine.key_manager.get_active_api_key() or api_key
-                    return await self._run_live_session(active_key)
+                with self.session_lock:
+                    if self.active_session_id == session_id:
+                        self.active_session_id = None
+                active_key = self.engine.key_manager.get_active_api_key() or api_key
+                return await self._run_live_session(active_key)
         finally:
             try:
                 await client.aio.aclose()
