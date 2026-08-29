@@ -2765,7 +2765,7 @@ class SGCubeApp:
         user_text = (self.user_transcript_buffer or "").strip()
         self.user_transcript_buffer = ""
         if not user_text:
-            return
+            return False
 
         print(f"[VOICE] user_speech_turn_finalized: '{user_text}'")
         # Store full user message in persistent conversation history
@@ -2773,6 +2773,12 @@ class SGCubeApp:
 
         local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id)
         if local_response:
+            # Cancel any pending wake/startup greeting so it never interrupts or overlaps user command
+            self.wake_greeting_pending = False
+
+            # Clear any preliminary/stale streaming audio from playback queue and advance response_id
+            self._clear_playback_queue()
+
             self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", local_response))
             self.engine.history.add_message(self.active_history_session_id, "assistant", local_response)
             
@@ -2792,8 +2798,10 @@ class SGCubeApp:
                     self.root.after(1500, lambda: self.set_state("LISTENING") if self.current_state in ("AI_THINKING", "USER_SPEAKING") and self.playback_queue.empty() else None)
                 except Exception:
                     pass
+            return True
         else:
             self.set_state("AI_THINKING")
+            return False
 
     async def _receive_loop(self, session, session_id):
         print(f"[RECEIVE] Starting receive loop for session_id={session_id}")
@@ -2834,28 +2842,28 @@ class SGCubeApp:
 
                         if server_content.output_transcription and server_content.output_transcription.text:
                             # Finalize pending user speech turn before processing assistant output
-                            self._finalize_user_speech_turn()
+                            intercepted = self._finalize_user_speech_turn()
                             text_chunk = server_content.output_transcription.text
-                            self.gui_queue.put(("TRANSCRIPT_AI", text_chunk))
-
-                            # Accumulate incremental streaming speech fragments from Gemini Live
-                            self.engine.history.accumulate_assistant_chunk(text_chunk)
+                            if not intercepted:
+                                self.gui_queue.put(("TRANSCRIPT_AI", text_chunk))
+                                self.engine.history.accumulate_assistant_chunk(text_chunk)
 
                         if server_content.model_turn:
                             # Finalize pending user speech turn when AI model starts speaking
-                            self._finalize_user_speech_turn()
-                            curr_resp_id = self.current_response_id
-                            for part in server_content.model_turn.parts:
-                                if part.inline_data and part.inline_data.data:
-                                    if not first_audio_logged:
-                                        t_first_chunk = time.time()
-                                        first_audio_logged = True
-                                        latency = t_first_chunk - t_speech_start if t_speech_start > 0 else 0.0
-                                        print(f"[VOICE] response_first_chunk (time_to_first_audio={latency:.3f}s)")
-                                        print("[VOICE] playback_started")
-                                    pcm_bytes = part.inline_data.data
-                                    # Tag audio chunk with current response_id
-                                    self.playback_queue.put((curr_resp_id, pcm_bytes))
+                            intercepted = self._finalize_user_speech_turn()
+                            if not intercepted:
+                                curr_resp_id = self.current_response_id
+                                for part in server_content.model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        if not first_audio_logged:
+                                            t_first_chunk = time.time()
+                                            first_audio_logged = True
+                                            latency = t_first_chunk - t_speech_start if t_speech_start > 0 else 0.0
+                                            print(f"[VOICE] response_first_chunk (time_to_first_audio={latency:.3f}s)")
+                                            print("[VOICE] playback_started")
+                                        pcm_bytes = part.inline_data.data
+                                        # Tag audio chunk with current response_id
+                                        self.playback_queue.put((curr_resp_id, pcm_bytes))
 
                         if server_content.turn_complete:
                             # Finalize any remaining user speech turn
