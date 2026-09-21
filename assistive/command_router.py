@@ -78,21 +78,25 @@ class CommandRouter:
 
         clean_text = text.strip().lower()
 
-        # 1. Face Memory Enrollment ("Remember this person as Rahul", "Save this face as Sahana", "Save this face", "Enroll face as Alex")
-        if any(w in clean_text for w in ["person", "face", "this person", "this face", "face as", "save face", "remember face"]):
+        # 1. Face Memory Enrollment ("Remember my face as Sharath", "Remember this person as Rahul", "Save my face as Rahul", "Save this face as Sahana", "Save this face", "Enroll face as Alex")
+        if any(w in clean_text for w in ["person", "face", "this person", "this face", "my face", "face as", "save face", "remember face", "enroll face"]):
             if any(p in clean_text for p in ["remember", "save", "enroll", "store"]):
                 remember_face_match = re.search(
-                    r'(?:remember|save|enroll|store)\s+(?:this\s+)?(?:person|face|them|him|her)?\s*(?:as)?\s*([a-zA-Z0-9_\s]*)',
+                    r'(?:remember|save|enroll|store)\s+(?:my\s+|this\s+)?(?:person|face|them|him|her)?\s*(?:as)?\s*([a-zA-Z0-9_\s]*)',
                     clean_text
                 )
                 if remember_face_match:
                     name_raw = remember_face_match.group(1).strip()
-                    name_str = re.sub(r'^(?:person|face|as|this\s+person|this\s+face|this)\s*', '', name_raw, flags=re.IGNORECASE).strip().title()
+                    name_str = re.sub(r'^(?:person|face|as|my\s+face|this\s+person|this\s+face|this|my)\s*', '', name_raw, flags=re.IGNORECASE).strip().title()
                     if name_str and name_str.lower() not in ["that", "this", "me", "my", "it", "face", "person", ""]:
                         return {"intent": "FACE_REMEMBER", "target": name_str, "params": {"name": name_str}}
                     else:
-                        # Bare face enrollment request (e.g. "Save this face", "Remember this face")
+                        # Bare face enrollment request (e.g. "Save this face", "Remember this face", "Remember my face")
                         return {"intent": "FACE_REMEMBER", "target": None, "params": {"name": None}}
+
+        # Face Re-Enrollment / Update Confirmation ("Yes, update", "Update face profile", "Yes update", "Update profile")
+        if any(p in clean_text for p in ["update face", "update profile", "update the face", "update the profile", "update face profile", "yes update", "yes, update"]):
+            return {"intent": "FACE_UPDATE_CONFIRM", "target": None, "params": {}}
 
         # 2. Clear All Persistent Memories ("Clear all memories", "Forget everything you know about me")
         if any(p in clean_text for p in ["forget everything", "clear all memories", "clear my memories", "erase all memories"]):
@@ -121,14 +125,15 @@ class CommandRouter:
                 key, fact_val = self.extract_memory_key_and_fact(text)
                 return {"intent": "MEMORY_SAVE", "target": key, "params": {"fact": fact_val, "key": key}}
 
-        # 5. Forget Specific Memory or Face ("Forget that Rahul is my friend", "Forget my favorite color", "Forget Rahul")
+        # 5. Forget Specific Memory or Face ("Forget face of John", "Forget my favorite color")
         forget_match = re.search(r'forget (?:that|my|the|face of|person)?\s*(.+)', clean_text)
         if forget_match:
             target_str = forget_match.group(1).strip()
             if "all faces" in target_str or "everyone" in target_str:
                 return {"intent": "FACE_FORGET_ALL", "target": None, "params": {}}
-            elif "face" in clean_text or "person" in clean_text or target_str.title() in ["Rahul", "Sarah", "Mom", "Dad", "Alex", "Sahana"]:
-                return {"intent": "FACE_FORGET", "target": target_str, "params": {"name": target_str}}
+            elif "face" in clean_text or "person" in clean_text:
+                name_target = re.sub(r'^(?:of|face\s+of|person)\s+', '', target_str, flags=re.IGNORECASE).strip()
+                return {"intent": "FACE_FORGET", "target": name_target, "params": {"name": name_target}}
             else:
                 key = re.sub(r'^(?:that|my|the|a|an)\s+', '', target_str, flags=re.IGNORECASE).strip().lower()
                 return {"intent": "MEMORY_FORGET", "target": key, "params": {"key": key}}
@@ -142,19 +147,26 @@ class CommandRouter:
         ]) or clean_text in ["introduce", "introduction", "who are you", "who is sg cube", "what is sg cube"]:
             return {"intent": "INTRODUCE", "target": None, "params": {}}
 
-        # 7. Memory Recall Query ("What is my favorite color?", "What's my name?", "Do you remember...", "Who is Rahul")
-        if any(p in clean_text for p in ["do you remember", "what is my", "what's my", "do you know my", "who is", "what do you know about", "what do you remember", "tell me what you remember", "do you know"]):
-            # Exclude standard visual queries ("Who is in front of me")
-            if not any(w in clean_text for w in ["in front of me", "around me", "this person", "this face"]):
-                return {"intent": "MEMORY_RECALL", "target": clean_text, "params": {"query": clean_text}}
-
-        # 7. Face Recognition Query ("Who is in front of me?")
-        if any(p in clean_text for p in ["who is in front of me", "who is this", "do you know this person", "who just entered", "do you recognize"]):
+        # 7. Face Recognition Query ("Who is in front of me?", "Who is this?", "Who am I?", "Do you recognize me?")
+        if any(p in clean_text for p in [
+            "who is in front of me", "who is this", "who is that", "who am i",
+            "do you know this person", "who just entered", "do you recognize",
+            "who is here", "identify face", "who is looking"
+        ]):
             return {"intent": "FACE_IDENTIFY", "target": None, "params": {}}
 
-        # 8. Face Listing
-        if any(p in clean_text for p in ["who do you know", "list people", "who do you remember", "list all faces", "show how many people"]):
+        # 8. Face Listing ("Who do you know?", "List people", "Show enrolled faces")
+        if any(p in clean_text for p in [
+            "who do you know", "list people", "who do you remember", "list all faces",
+            "show how many people", "saved in face memory", "saved faces", "enrolled faces"
+        ]):
             return {"intent": "FACE_LIST", "target": None, "params": {}}
+
+        # 9. Memory Recall Query ("What is my favorite color?", "What's my name?", "Do you remember...")
+        if any(p in clean_text for p in ["do you remember", "what is my", "what's my", "do you know my", "who is", "what do you know about", "what do you remember", "tell me what you remember", "do you know"]):
+            # Exclude standard visual queries
+            if not any(w in clean_text for w in ["in front of me", "around me", "this person", "this face", "this"]):
+                return {"intent": "MEMORY_RECALL", "target": clean_text, "params": {"query": clean_text}}
 
         # 9. Currency Query
         if any(p in clean_text for p in ["how much money", "what currency", "how much is this", "what denomination", "rupee note", "banknote"]):

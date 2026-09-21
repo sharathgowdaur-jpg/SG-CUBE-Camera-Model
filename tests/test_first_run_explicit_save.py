@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import unittest
 import numpy as np
 import cv2
@@ -14,11 +15,20 @@ from assistive.vision_engine import VisionEngine
 
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "first_run_test_data")
 
+from tests.test_voice_multi_sample_enrollment import create_synthetic_face_image
+
 class TestFirstRunExplicitSave(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if os.path.exists(TEST_DATA_DIR):
+            shutil.rmtree(TEST_DATA_DIR, ignore_errors=True)
         os.makedirs(TEST_DATA_DIR, exist_ok=True)
         cls.engine = VisionEngine(data_dir=TEST_DATA_DIR)
+
+    @classmethod
+    def tearDownClass(cls):
+        if os.path.exists(TEST_DATA_DIR):
+            shutil.rmtree(TEST_DATA_DIR, ignore_errors=True)
 
     def test_01_first_run_detection_and_completion(self):
         # Set fresh install state
@@ -26,14 +36,14 @@ class TestFirstRunExplicitSave(unittest.TestCase):
         self.assertFalse(self.engine.store.get_setting("first_run_completed"))
 
         # Perform onboarding profile setup
-        self.engine.store.set_setting("user_name", "Alexth")
-        self.engine.store.set_setting("user_display_name", "Alexth")
+        self.engine.store.set_setting("user_name", "Sharath")
+        self.engine.store.set_setting("user_display_name", "Sharath")
         self.engine.store.set_setting("first_run_completed", True)
 
         # Reload store to simulate restart
         reloaded_store = MemoryStore(base_dir=TEST_DATA_DIR)
         self.assertTrue(reloaded_store.get_setting("first_run_completed"))
-        self.assertEqual(reloaded_store.get_setting("user_display_name"), "Alexth")
+        self.assertEqual(reloaded_store.get_setting("user_display_name"), "Sharath")
 
     def test_02_explicit_memory_save_and_confirmation(self):
         # 1. Explicit save request
@@ -57,13 +67,28 @@ class TestFirstRunExplicitSave(unittest.TestCase):
 
     def test_03_explicit_face_save_and_confirmation(self):
         # Create synthetic face crop frame
-        frame = np.zeros((300, 300, 3), dtype=np.uint8)
-        cv2.rectangle(frame, (50, 50), (250, 250), (120, 150, 200), -1)
+        frame = create_synthetic_face_image(size=(120, 120), seed=1001, contrast=50)
         self.engine.current_frame = frame
 
-        # Route face save command
+        # Route face save command - initiates guided enrollment session
         resp = self.engine.process_user_speech_query("Remember this person as Rahul")
-        self.assertIn("remembered this face as Rahul", resp)
+        self.assertIn("rahul", resp.lower())
+        self.assertTrue(self.engine.enrollment_session.is_active)
+
+        # Feed enrollment samples through engine with multi-pose variations to complete enrollment
+        for s in range(25):
+            f_sample = create_synthetic_face_image(
+                size=(120, 120),
+                seed=1001 + s * 7,
+                contrast=40 + (s % 5),
+                brightness=90 + s * 4,
+                roll_angle=(s - 12) * 1.2
+            )
+            self.engine.process_frame(f_sample)
+        # Verification passes
+        for v in range(4):
+            f_sample = create_synthetic_face_image(size=(120, 120), seed=1001, contrast=45)
+            self.engine.process_frame(f_sample)
 
         # Reload face memory to verify persistence across restart
         reloaded_engine = VisionEngine(data_dir=TEST_DATA_DIR)
@@ -73,9 +98,9 @@ class TestFirstRunExplicitSave(unittest.TestCase):
         # Set empty frame (no face)
         self.engine.current_frame = None
 
-        # Route face save command
-        resp = self.engine.process_user_speech_query("Remember this person as Alex")
-        self.assertTrue(any(w in resp.lower() for w in ["no visual frame", "can't clearly see", "no face"]))
+        # Route bare face save command when no face present
+        resp = self.engine.process_user_speech_query("Remember my face")
+        self.assertTrue(any(w in resp.lower() for w in ["no visual frame", "can't clearly see", "no face", "camera", "detect"]))
 
     def test_05_data_separation_verification(self):
         # Profile, Memory, Face, History paths must be isolated

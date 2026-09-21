@@ -12,6 +12,7 @@ from assistive.command_router import CommandRouter
 from assistive.memory_manager import MemoryManager
 from assistive.face_memory import FaceMemory
 from assistive.conversation_history import ConversationHistory
+from tests.test_voice_multi_sample_enrollment import create_synthetic_face_image
 
 
 class TestSaveCommandMaster(unittest.TestCase):
@@ -83,14 +84,38 @@ class TestSaveCommandMaster(unittest.TestCase):
 
     def test_06_save_this_face_with_name(self):
         """ Test: Save this face as Rahul with a synthetic face frame """
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.ellipse(frame, (320, 240), (80, 110), 0, 0, 360, (180, 200, 240), -1)
+        frame = create_synthetic_face_image(size=(120, 120), seed=2001, contrast=50)
         self.engine.current_frame = frame
 
         cmd = "Save this face as Rahul"
         resp = self.engine.process_user_speech_query(cmd)
         self.assertIsNotNone(resp)
         self.assertIn("rahul", resp.lower())
+        self.assertTrue(self.engine.enrollment_session.is_active)
+
+        # Feed enrollment and verification frames with multi-pose variations
+        for s in range(30):
+            f_sample = create_synthetic_face_image(
+                size=(120, 120),
+                seed=2001 + s * 10,
+                contrast=40 + (s % 5),
+                brightness=90 + s * 4,
+                roll_angle=(s - 15) * 1.5
+            )
+            res = self.engine.process_frame(f_sample)
+            if self.engine.enrollment_session.state == "VERIFYING":
+                break
+
+        for v in range(6):
+            f_sample = create_synthetic_face_image(size=(120, 120), seed=2001, contrast=45)
+            self.engine.process_frame(f_sample)
+            if self.engine.enrollment_session.state == "COMPLETED":
+                break
+
+        print("DEBUG SESSION STATE:", self.engine.enrollment_session.state)
+        print("DEBUG ACCEPTED SAMPLES:", len(self.engine.enrollment_session.accepted_samples))
+        print("DEBUG REJECTIONS:", self.engine.enrollment_session.rejection_reasons)
+        print("DEBUG PEOPLE:", self.engine.face_memory.list_people())
 
         people = self.engine.face_memory.list_people()
         self.assertIn("Rahul", people)
@@ -100,7 +125,7 @@ class TestSaveCommandMaster(unittest.TestCase):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         self.engine.current_frame = frame
 
-        cmd = "Save this face as Alex"
+        cmd = "Save this face"
         resp = self.engine.process_user_speech_query(cmd)
         self.assertIsNotNone(resp)
         self.assertIn("couldn't detect a face", resp.lower())

@@ -648,17 +648,12 @@ class SGCubeApp:
 
         # Set Window Icon
         _app_dir = os.path.abspath(os.path.dirname(__file__))
-        _icon_candidates = [
-            os.path.join(_app_dir, "assets", "SG-CUBE.ico"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "SG-CUBE", "assets", "SG-CUBE.ico")
-        ]
-        for _ic in _icon_candidates:
-            if os.path.exists(_ic):
-                try:
-                    self.root.iconbitmap(_ic)
-                    break
-                except Exception:
-                    pass
+        _icon_path = os.path.join(_app_dir, "assets", "SG-CUBE.ico")
+        if os.path.exists(_icon_path):
+            try:
+                self.root.iconbitmap(_icon_path)
+            except Exception:
+                pass
 
         # Instantiate Assistive Vision Engine
         self.engine = VisionEngine(data_dir="data")
@@ -2325,38 +2320,75 @@ class SGCubeApp:
                     for face in faces:
                         x, y, w, h = face["bbox"]
                         name = face.get("name") or "Unknown"
-                        face_summary.append(name)
+                        state = face.get("match_state") or face.get("state", "UNKNOWN")
+                        conf = face.get("confidence", 0.0)
+                        is_conf = face.get("is_confirmed", False)
+                        q_ok = face.get("quality_ok", True)
+                        q_reason = face.get("quality_reason", "")
+
+                        if state == "KNOWN" and name != "Unknown":
+                            face_summary.append(f"{name} ({conf*100:.0f}%)")
+                        else:
+                            face_summary.append(name)
+
                         if self.dev_mode:
                             scale_x = 640 / float(frame.shape[1])
                             scale_y = 420 / float(frame.shape[0])
                             px, py, pw, ph = int(x * scale_x), int(y * scale_y), int(w * scale_x), int(h * scale_y)
-                            is_known = bool(face.get("name") and face.get("name") != "Unknown")
-                            # Mint outline for known (#4DF7C4 -> BGR: 196, 247, 77), Amber outline for unknown (#FDAB72 -> BGR: 114, 171, 253)
-                            color = (196, 247, 77) if is_known else (114, 171, 253)
+
+                            if state == "KNOWN" and is_conf:
+                                color = (196, 247, 77)  # Mint #4DF7C4
+                                tag_text = f" {name} ({conf*100:.0f}%) "
+                            elif state == "KNOWN" and not is_conf:
+                                color = (114, 171, 253)  # Amber #FDAB72
+                                tag_text = f" Recognizing... ({name}) "
+                            elif not q_ok:
+                                color = (114, 171, 253)  # Amber
+                                tag_text = f" Low Quality "
+                            else:
+                                color = (87, 71, 255)  # Alert Red #FF4757
+                                tag_text = " Unknown "
+
                             cv2.rectangle(preview_frame, (px, py), (px + pw, py + ph), color, 2)
-                            # Name tag on #050505 background with matching border & text
-                            tag_text = f" {name} "
-                            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
                             tag_y1 = max(0, py - th - 8)
                             tag_y2 = py
                             cv2.rectangle(preview_frame, (px, tag_y1), (px + tw + 6, tag_y2), (5, 5, 5), -1)
                             cv2.rectangle(preview_frame, (px, tag_y1), (px + tw + 6, tag_y2), color, 1)
-                            cv2.putText(preview_frame, tag_text, (px + 2, py - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                            cv2.putText(preview_frame, tag_text, (px + 2, py - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
                     self._evaluate_wake_greeting(faces)
+
+                    # Render Live Enrollment HUD Overlay if session active
+                    enroll_info = cached_frame_info.get("enrollment", {})
+                    if enroll_info.get("active"):
+                        e_name = enroll_info.get("name", "User")
+                        e_samples = enroll_info.get("samples_count", 0)
+                        e_target = enroll_info.get("target_samples", 25)
+                        e_state = enroll_info.get("state", "ENROLLING")
+                        
+                        # Draw top neon HUD banner
+                        cv2.rectangle(preview_frame, (10, 10), (630, 46), (5, 5, 5), -1)
+                        cv2.rectangle(preview_frame, (10, 10), (630, 46), (0, 237, 255), 1)
+                        banner_text = f"ENROLLING {e_name.upper()} | {e_state} | {e_samples}/{e_target} Samples"
+                        cv2.putText(preview_frame, banner_text, (20, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 237, 255), 2, cv2.LINE_AA)
 
                     safety = cached_frame_info.get("safety", {})
                     hazard_desc = safety.get("warning_text", "Clear") if safety.get("hazard_detected") else "Clear"
 
-                    perception_text = f"Faces: {', '.join(face_summary) if face_summary else 'None'} | Hazards: {hazard_desc}"
+                    if enroll_info.get("active"):
+                        perception_text = f"Enrolling: {enroll_info.get('name')} ({enroll_info.get('samples_count')}/{enroll_info.get('target_samples')}) | {enroll_info.get('state')}"
+                    else:
+                        perception_text = f"Faces: {', '.join(face_summary) if face_summary else 'None'} | Hazards: {hazard_desc}"
                     self.gui_queue.put(("PERCEPTION", perception_text))
 
-                    # Send live vision HUD telemetry (Environment & Objects)
+                    # Send live vision HUD telemetry (Environment & Objects & Enrollment)
                     hud_payload = {
                         "faces": faces,
                         "safety": safety,
                         "environment": cached_frame_info.get("environment", {}),
-                        "objects": cached_frame_info.get("objects", [])
+                        "objects": cached_frame_info.get("objects", []),
+                        "enrollment": enroll_info
                     }
                     self.gui_queue.put(("HUD_UPDATE", hud_payload))
 
@@ -3267,75 +3299,58 @@ class SGCubeApp:
             frame = self.engine.current_frame
             if frame is None or getattr(frame, 'size', 0) == 0:
                 print("[FACE-TEST] no frame available")
-                print("[FACE-TEST] decision = NO FRAME")
-                print("[FACE-TEST] completed")
                 messagebox.showwarning("Notice", "Camera feed is not ready or active. Please ensure camera is connected.", parent=dialog)
                 self.set_state("LISTENING")
                 return
 
-            boxes = self.engine.face_recognizer.detect_faces(frame)
-            num_faces = len(boxes)
+            faces = self.engine.face_recognizer.process_frame(frame)
+            num_faces = len(faces)
             print(f"[FACE-TEST] faces detected = {num_faces}")
 
             if num_faces == 0:
-                print("[FACE-TEST] crop created = None")
                 print("[FACE-TEST] decision = NO FACE")
-                print("[FACE-TEST] completed")
-                messagebox.showinfo("Recognition Result", "No face detected in current frame.\nPlease look directly at the camera.", parent=dialog)
+                voice_msg = "I don't currently see anyone in front of you."
+                self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", voice_msg))
                 self.set_state("LISTENING")
+                messagebox.showinfo("Recognition Result", "No face detected in current frame.\nPlease look directly at the camera.", parent=dialog)
                 return
-
-            faces = self.engine.face_recognizer.process_frame(frame)
-            num_stored = len(self.engine.face_memory.profiles)
-            print(f"[FACE-TEST] stored profiles = {num_stored}")
 
             summary_lines = []
             voice_names = []
-            threshold = self.engine.face_recognizer.threshold
+            has_known = False
 
             for idx, face_info in enumerate(faces, 1):
-                crop = face_info.get("crop")
                 name = face_info.get("name")
+                state = face_info.get("match_state") or face_info.get("state", "UNKNOWN")
                 conf = face_info.get("confidence", 0.0)
+                margin = face_info.get("margin", 0.0)
+                is_conf = face_info.get("is_confirmed", False)
+                q_ok = face_info.get("quality_ok", True)
+                q_reason = face_info.get("quality_reason", "")
+                pct = conf * 100.0
 
-                print(f"[FACE-TEST] crop created: shape={crop.shape if crop is not None else 'None'}")
-                if crop is not None and crop.size > 0:
-                    emb = self.engine.face_memory.compute_face_embedding(crop)
-                    print(f"[FACE-TEST] embedding created")
-                    print(f"[FACE-TEST] embedding dimension = {len(emb)}")
-                else:
-                    print(f"[FACE-TEST] embedding created: 0-D")
-
-                print(f"[FACE-TEST] best profile = {name or 'Unknown'}")
-                print(f"[FACE-TEST] similarity = {conf:.4f}")
-                print(f"[FACE-TEST] threshold = {threshold:.2f}")
-
-                if name:
-                    decision = "MATCH"
-                    pct = conf * 100.0
-                    summary_lines.append(f"Face {idx}: MATCH — {name} ({pct:.1f}% confidence)")
+                if state == "KNOWN" and name and name != "Unknown":
+                    has_known = True
                     voice_names.append(name)
+                    conf_str = "Confirmed" if is_conf else "Tracking"
+                    summary_lines.append(f"Face {idx}: KNOWN [{conf_str}] — {name} ({pct:.1f}% confidence, margin: {margin:.2f})")
+                elif not q_ok or state == "UNCERTAIN":
+                    summary_lines.append(f"Face {idx}: UNCERTAIN — ({q_reason})")
                 else:
-                    decision = "UNKNOWN"
-                    pct = conf * 100.0
-                    summary_lines.append(f"Face {idx}: UNKNOWN — (best similarity: {pct:.1f}%, threshold: {threshold*100:.0f}%)")
-
-                print(f"[FACE-TEST] decision = {decision}")
-
-            print("[FACE-TEST] completed")
+                    summary_lines.append(f"Face {idx}: UNKNOWN — (best confidence: {pct:.1f}%)")
 
             result_text = "\n".join(summary_lines)
-            if voice_names:
-                voice_msg = f"I recognize {', '.join(voice_names)}."
+            if has_known and voice_names:
+                voice_msg = f"Hello {voice_names[0]}."
             else:
-                voice_msg = "I detect a face, but it is not enrolled in face memory."
+                voice_msg = "Sorry, I can't recognize you."
 
             self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", voice_msg))
             self.set_state("LISTENING")
 
             messagebox.showinfo(
                 "Face Recognition Result",
-                f"Face Recognition Pipeline Results ({len(faces)} face(s) found):\n\n{result_text}",
+                f"Face Recognition Pipeline Results ({len(faces)} face(s) found):\n\n{result_text}\n\nSpoken Response: \"{voice_msg}\"",
                 parent=dialog
             )
 

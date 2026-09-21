@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from .memory_store import MemoryStore
 from .face_memory import FaceMemory
 from .face_recognition import FaceRecognizer
+from .face_enrollment import FaceEnrollmentSession
 from .currency_detector import CurrencyDetector
 from .ocr_engine import OCREngine
 from .spatial_analyzer import SpatialAnalyzer
@@ -55,6 +56,8 @@ class VisionEngine:
             greeting_cooldown=cooldown
         )
         self.face_recognizer.set_greetings_enabled(self.store.get_setting("greeting_enabled", True))
+        self.enrollment_session = FaceEnrollmentSession()
+        self.pending_face_update: Optional[str] = None
 
         self.currency_detector = CurrencyDetector()
         self.ocr_engine = OCREngine()
@@ -106,9 +109,26 @@ class VisionEngine:
         h_img, w_img = frame.shape[:2]
         self.spatial.update_frame_dimensions(w_img, h_img)
 
+        # 0. Active Face Enrollment Processing
+        enroll_res = {}
+        if self.enrollment_session.is_active:
+            enroll_res = self.enrollment_session.process_frame(frame, self.face_recognizer, self.face_memory)
+            if enroll_res.get("spoken_prompt"):
+                self.response_manager.add_response(enroll_res["spoken_prompt"], priority=2, force=True)
+            if enroll_res.get("status") == "COMPLETED" and self.enrollment_session.name:
+                self.memory.save_memory(
+                    "relationship",
+                    self.enrollment_session.name,
+                    f"{self.enrollment_session.name} is saved in face memory."
+                )
+
         # 1. Face Detection & Recognition
         faces = self.face_recognizer.process_frame(frame)
         self.last_faces = faces
+
+        for face in faces:
+            if face.get("should_greet") and face.get("greeting_text"):
+                self.response_manager.add_response(face["greeting_text"], priority=2, force=True)
 
         # 2. Safety Hazard Detection
         if self.store.get_setting("safety_alerts_enabled", True):
@@ -151,7 +171,16 @@ class VisionEngine:
             "safety": safety_res,
             "environment": self.last_environment,
             "objects": objects_res,
-            "mode": self.active_mode
+            "mode": self.active_mode,
+            "enrollment": {
+                "active": self.enrollment_session.is_active,
+                "state": self.enrollment_session.state,
+                "name": self.enrollment_session.name,
+                "progress": self.enrollment_session.progress_fraction,
+                "samples_count": len(self.enrollment_session.accepted_samples),
+                "target_samples": self.enrollment_session.target_samples,
+                "last_result": enroll_res
+            }
         }
 
     def process_user_speech_query(self, user_transcript: str, session_id: Optional[str] = None) -> Optional[str]:
@@ -225,7 +254,8 @@ class VisionEngine:
             return resp
 
         elif intent == "MEMORY_FORGET":
-            key = route["params"].get("key", "")
+            raw_key = route["params"].get("key", "")
+            key = raw_key.rstrip(".?! \t\n")
             success = self.memory.forget_memory(key)
             if success:
                 resp = f"Got it. I have deleted that memory about {key}."
@@ -265,22 +295,36 @@ class VisionEngine:
             print(f"[SAVE] command received: '{raw_cmd}'")
             print(f"[SAVE] intent detected: 'FACE_REMEMBER'")
             print(f"[SAVE] memory handler started: 'FACE_REMEMBER'")
-            if not name or name.lower() in ["this", "face", "this face", "person", "this person", "them", "him", "her", "someone", "friend"]:
-                crop = self.face_recognizer.get_primary_face_crop(self.current_frame)
-                if crop is None or crop.size == 0:
+
+            if not name or name.lower() in ["this", "face", "this face", "person", "this person", "them", "him", "her", "someone", "friend", "me", "my face", "my", ""]:
+                crop = self.face_recognizer.get_primary_face_crop(self.current_frame) if self.current_frame is not None else None
+                if crop is None or getattr(crop, 'size', 0) == 0:
                     resp = "I couldn't detect a face to save. Please look directly into the camera."
                 else:
-                    resp = "I can see a face. Whom should I save this face as?"
+                    resp = "Whom should I save this face as?"
             else:
-                enroll_res = self.face_recognizer.enroll_active_face(self.current_frame, name)
-                if enroll_res.get("success"):
-                    self.memory.save_memory("relationship", name, f"{name} is saved in face memory.")
-                    resp = f"Got it. I have remembered this face as {name}."
+                clean_name = name.strip().title()
+                if clean_name in self.face_memory.list_people():
+                    self.pending_face_update = clean_name
+                    resp = f"{clean_name} is already remembered. Do you want to update the face profile?"
                 else:
-                    resp = enroll_res.get("message", f"I couldn't detect a face to save. Please look directly into the camera so I can remember {name}.")
+                    session_info = self.enrollment_session.start_session(clean_name, target_samples=25, is_update=False)
+                    resp = session_info.get("spoken_prompt", f"Starting face enrollment for {clean_name}. Please look directly at the camera.")
+
             self.response_manager.add_response(resp, priority=2, force=True)
             print(f"[SAVE] response generated: '{resp}'")
             print(f"[SAVE] completed")
+            return resp
+
+        elif intent == "FACE_UPDATE_CONFIRM":
+            if self.pending_face_update:
+                name_to_update = self.pending_face_update
+                self.pending_face_update = None
+                session_info = self.enrollment_session.start_session(name_to_update, target_samples=25, is_update=True)
+                resp = session_info.get("spoken_prompt", f"Updating face profile for {name_to_update}. Please look directly at the camera.")
+            else:
+                resp = "Which face profile would you like to update?"
+            self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
         elif intent == "FACE_FORGET":
@@ -314,17 +358,29 @@ class VisionEngine:
             if self.last_faces:
                 for face in self.last_faces:
                     name = face.get("name")
-                    spatial = self.spatial.get_spatial_zone(face["bbox"])
-                    if name:
-                        # Check long-term memory for relationship fact
-                        rel_fact = self.memory.recall_memory(name)
-                        if rel_fact:
-                            resp = f"There is one person {spatial['full_verbal']}. I recognize him as {name}. ({rel_fact})"
-                        else:
-                            resp = f"There is one person {spatial['full_verbal']}. I recognize him as {name}."
+                    state = face.get("match_state") or face.get("state")
+                    is_confirmed = face.get("is_confirmed", False)
+                    liveness_ok = face.get("liveness_ok", True)
+                    quality_ok = face.get("quality_ok", True)
+
+                    # Strict 5-condition Final Name Disclosure Gate:
+                    # 1. State must be explicitly KNOWN
+                    # 2. Tracklet must have temporal confirmation (M=3 of N=5)
+                    # 3. Liveness / anti-spoof must pass (no static photo or replay attack)
+                    # 4. Face quality gate must be satisfied
+                    # 5. Name must be valid and non-empty
+                    if (
+                        state == "KNOWN"
+                        and is_confirmed
+                        and liveness_ok
+                        and quality_ok
+                        and name
+                        and name != "Unknown"
+                    ):
+                        resp = f"Hello {name}."
                         self.response_manager.add_response(resp, priority=2, force=True)
                         return resp
-                resp = "There is a person in front of you, but I don't recognize them."
+                resp = "Sorry, I can't recognize you."
             else:
                 resp = "I don't currently see anyone in front of you."
             self.response_manager.add_response(resp, priority=2, force=True)

@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['D:/SG-CUBE-INSTALL/release/SG-CUBE-2.4.6/installer.py'],
+    ['D:/SG-CUBE-INSTALL/release/SG-CUBE-2.4.7/installer.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='SG-CUBE-2.4.6-Setup',
+    name='SG-CUBE-2.4.7-Setup',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
