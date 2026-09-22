@@ -69,7 +69,7 @@ class SecurityManager:
     """
 
     POLICY_MAP: Dict[str, SecurityLevel] = {
-        # Safe perception & conversation
+        # Safe perception, tasks & conversation
         "GENERAL": SecurityLevel.SAFE,
         "OCR": SecurityLevel.SAFE,
         "CURRENCY": SecurityLevel.SAFE,
@@ -82,8 +82,44 @@ class SecurityManager:
         "FACE_IDENTIFY": SecurityLevel.SAFE,
         "SETTINGS": SecurityLevel.SAFE,
         "SLEEP": SecurityLevel.SAFE,
+        "TASK_CREATE": SecurityLevel.SAFE,
+        "REMINDER_CREATE": SecurityLevel.SAFE,
+        "TASK_LIST": SecurityLevel.SAFE,
+        "REMINDER_LIST": SecurityLevel.SAFE,
+        "TASK_COMPLETE": SecurityLevel.SAFE,
+        "TASK_SNOOZE": SecurityLevel.SAFE,
+        "REMINDER_SNOOZE": SecurityLevel.SAFE,
+        "TASK_SEARCH": SecurityLevel.SAFE,
+        "PEOPLE_COUNT": SecurityLevel.SAFE,
+        "PEOPLE_DESCRIPTION": SecurityLevel.SAFE,
+        "PEOPLE_LOCATION": SecurityLevel.SAFE,
+        "KNOWN_PEOPLE_QUERY": SecurityLevel.SAFE,
+        "PERSON_LOCATION_QUERY": SecurityLevel.SAFE,
+        "PEOPLE_BEHIND_QUERY": SecurityLevel.SAFE,
+        "PERSON_ENTERED": SecurityLevel.SAFE,
+        "PERSON_LEFT": SecurityLevel.SAFE,
+        "DOCUMENT_READ": SecurityLevel.SAFE,
+        "DOCUMENT_SUMMARY": SecurityLevel.SAFE,
+        "DOCUMENT_TITLE": SecurityLevel.SAFE,
+        "DOCUMENT_FIELDS": SecurityLevel.SAFE,
+        "DOCUMENT_TABLE": SecurityLevel.SAFE,
+        "DOCUMENT_TOTAL": SecurityLevel.SAFE,
+        "DOCUMENT_SEARCH": SecurityLevel.SAFE,
+        "DOCUMENT_REPEAT": SecurityLevel.SAFE,
+        "DOCUMENT_CLEAR": SecurityLevel.SAFE,
+        "AUTOMATION_OPEN_APP": SecurityLevel.SAFE,
+        "AUTOMATION_OPEN_URL": SecurityLevel.SAFE,
+        "AUTOMATION_COPY_TEXT": SecurityLevel.SAFE,
+        "AUTOMATION_STATUS": SecurityLevel.SAFE,
+        "AUTOMATION_CONFIRM": SecurityLevel.SAFE,
+        "AUTOMATION_CANCEL": SecurityLevel.SAFE,
+        "ALERTS_PAUSE": SecurityLevel.SAFE,
+        "ALERTS_RESUME": SecurityLevel.SAFE,
+        "ALERTS_SET_MODE": SecurityLevel.SAFE,
+        "ALERTS_STATUS": SecurityLevel.SAFE,
+        "ALERTS_EXPLAIN_LAST": SecurityLevel.SAFE,
 
-        # Protected operations (Single deletion, listings, personal memories)
+        # Protected operations (Single deletion, listings, personal memories, task edits, process closing)
         "MEMORY_RECALL": SecurityLevel.PROTECTED,
         "MEMORY_LIST": SecurityLevel.PROTECTED,
         "MEMORY_SAVE": SecurityLevel.SAFE,  # Saving facts is safe; recalling/listing is protected
@@ -96,14 +132,25 @@ class SecurityManager:
         "CONVERSATION_HISTORY_VIEW": SecurityLevel.PROTECTED,
         "CONVERSATION_HISTORY_EXPORT": SecurityLevel.PROTECTED,
         "API_CONFIG_VIEW": SecurityLevel.PROTECTED,
+        "TASK_DELETE": SecurityLevel.PROTECTED,
+        "TASK_EDIT": SecurityLevel.PROTECTED,
+        "REMINDER_CANCEL": SecurityLevel.PROTECTED,
+        "REMINDER_EDIT": SecurityLevel.PROTECTED,
+        "TASK_LIST_PRIVATE": SecurityLevel.PROTECTED,
+        "AUTOMATION_CLOSE_APP": SecurityLevel.PROTECTED,
+        "AUTOMATION_OPEN_FOLDER": SecurityLevel.PROTECTED,
 
-        # High-Risk operations (Mass deletion, security modification)
+        # High-Risk operations (Mass deletion, security modification, system workstation lock)
         "MEMORY_CLEAR": SecurityLevel.HIGH_RISK,
         "FACE_FORGET_ALL": SecurityLevel.HIGH_RISK,
         "HISTORY_CLEAR_ALL": SecurityLevel.HIGH_RISK,
+        "TASK_CLEAR_ALL": SecurityLevel.HIGH_RISK,
+        "REMINDER_CLEAR_ALL": SecurityLevel.HIGH_RISK,
         "SECURITY_REMOVE": SecurityLevel.HIGH_RISK,
         "SECURITY_RESET": SecurityLevel.HIGH_RISK,
         "SECURITY_CONFIG_CHANGE": SecurityLevel.HIGH_RISK,
+        "AUTOMATION_LOCK_DEVICE": SecurityLevel.HIGH_RISK,
+        "AUTOMATION_CONFIG_CHANGE": SecurityLevel.HIGH_RISK,
     }
 
     def __init__(self, pref_dir: Optional[str] = None, store: Optional[Any] = None):

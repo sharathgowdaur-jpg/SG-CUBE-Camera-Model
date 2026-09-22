@@ -100,6 +100,47 @@ class CommandRouter:
 
         clean_text = text.strip().lower()
 
+        # 0. Conversation Context Reset ("Start a new conversation", "Clear conversation context", "Reset conversation")
+        if any(p in clean_text for p in [
+            "start a new conversation", "start new conversation", "clear conversation context",
+            "forget this conversation context", "forget conversation context", "reset conversation context",
+            "reset conversation", "clear context", "forget context", "start fresh conversation",
+            "new conversation", "start fresh"
+        ]):
+            return {"intent": "CONTEXT_RESET", "target": None, "params": {}}
+
+        # 0.1. Follow-up Reminder Modification ("Make it 7 PM", "Change that reminder to 7 PM", "Move it to tomorrow")
+        rem_edit_match = re.search(r'\b(?:make\s+it|change\s+it\s+to|change\s+that\s+reminder\s+to|move\s+it\s+to|reschedule\s+(?:it|that\s+reminder)\s+to)\s+(.+)', clean_text)
+        if rem_edit_match:
+            new_val = rem_edit_match.group(1).strip()
+            return {"intent": "FOLLOWUP_REMINDER_EDIT", "target": new_val, "params": {"new_time_expr": new_val}}
+
+        # 0.2. Follow-up Time Specification ("At 6 PM", "Tomorrow at 8", "6:30 PM", "Tonight")
+        time_spec_match = re.match(r'^(?:at\s+|for\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}\s*(?:am|pm)|tonight|in the morning|in the evening|in the afternoon|tomorrow morning|tomorrow evening)$', clean_text)
+        if time_spec_match and not any(w in clean_text for w in ["task", "reminder", "set", "create", "find", "where"]):
+            return {"intent": "FOLLOWUP_TIME_SPECIFICATION", "target": time_spec_match.group(1).strip(), "params": {"time_expr": time_spec_match.group(1).strip()}}
+
+        # 0.3. Proactive Assistive Alerts ("Stop proactive alerts", "Pause alerts", "Resume alerts", "Turn off proactive alerts", "Alerts mode minimal", "Alerts status")
+        if any(w in clean_text for w in ["alert", "alerts", "proactive alert", "proactive alerts", "notification", "notifications"]):
+            if any(p in clean_text for p in ["pause", "stop", "silence", "mute", "quiet"]):
+                dur_match = re.search(r'(?:for\s+)?(\d+\s*(?:minutes?|mins?|seconds?|secs?|hours?|hrs?))', clean_text)
+                dur_str = dur_match.group(1).strip() if dur_match else None
+                return {"intent": "ALERTS_PAUSE", "target": None, "params": {"query": text, "duration": dur_str}}
+            if any(p in clean_text for p in ["resume", "unpause", "turn on", "enable", "start"]):
+                return {"intent": "ALERTS_RESUME", "target": None, "params": {"query": text}}
+            if any(p in clean_text for p in ["turn off", "disable", "shut off", "deactivate"]):
+                return {"intent": "ALERTS_SET_MODE", "target": "OFF", "params": {"mode": "OFF"}}
+            if "minimal" in clean_text:
+                return {"intent": "ALERTS_SET_MODE", "target": "MINIMAL", "params": {"mode": "MINIMAL"}}
+            if "assistive" in clean_text:
+                return {"intent": "ALERTS_SET_MODE", "target": "ASSISTIVE", "params": {"mode": "ASSISTIVE"}}
+            if "normal" in clean_text:
+                return {"intent": "ALERTS_SET_MODE", "target": "NORMAL", "params": {"mode": "NORMAL"}}
+            if any(p in clean_text for p in ["status", "settings", "mode", "show alerts", "what alerts", "list alerts", "check alerts"]):
+                return {"intent": "ALERTS_STATUS", "target": None, "params": {}}
+            if any(p in clean_text for p in ["what was that", "what was the alert", "what alert", "explain alert", "repeat alert", "last alert"]):
+                return {"intent": "ALERTS_EXPLAIN_LAST", "target": None, "params": {}}
+
         # 1. Face Memory Enrollment ("Remember my face as Sharath", "Save this face as Sahana", "Enroll face as Alex")
         if any(w in clean_text for w in ["person", "face", "this person", "this face", "my face", "face as", "save face", "remember face", "enroll face"]):
             if any(p in clean_text for p in ["remember", "save", "enroll", "store"]):
@@ -137,14 +178,181 @@ class CommandRouter:
         ]):
             return {"intent": "MEMORY_LIST", "target": None, "params": {}}
 
-        # 4. Explicit Location Recall ("Where did I say my laptop is?", "Where is my laptop?", "Where did I put my keys?")
+        # 3.1. Task / Reminder Clear All ("Delete all my tasks", "Clear all tasks", "Delete all reminders")
+        if any(p in clean_text for p in [
+            "delete all my tasks", "delete all tasks", "clear all tasks", "clear my tasks",
+            "delete all reminders", "delete all my reminders", "clear all reminders", "clear my reminders"
+        ]):
+            return {"intent": "TASK_CLEAR_ALL", "target": None, "params": {}}
+
+        # 3.2. Task / Reminder Snooze ("Snooze for 10 minutes", "Snooze this reminder", "Remind me again in 1 hour", "Snooze")
+        if clean_text.startswith("snooze") or clean_text.startswith("remind me again in") or clean_text == "snooze":
+            return {"intent": "REMINDER_SNOOZE", "target": None, "params": {"query": text}}
+
+        # 3.3. Task Completion ("Mark my project task as complete", "Complete task report", "Mark report as done", "I finished my report")
+        complete_match = re.search(r'(?:mark\s+(?:my\s+)?(.+?)\s+as\s+(?:complete|completed|done)|complete\s+(?:my\s+)?(?:task\s+)?(.+)|finish\s+(?:my\s+)?(?:task\s+)?(.+)|i\s+finished\s+(?:my\s+)?(.+))', clean_text)
+        if complete_match and not any(w in clean_text for w in ["what", "who", "where", "how", "create", "add", "new"]):
+            task_t = complete_match.group(1) or complete_match.group(2) or complete_match.group(3) or complete_match.group(4)
+            clean_t = re.sub(r'\s+task$', '', task_t.strip()).strip()
+            return {"intent": "TASK_COMPLETE", "target": clean_t, "params": {"task_name": clean_t, "query": text}}
+
+        # 3.4. Task Deletion / Reminder Cancellation ("Delete my report task", "Cancel my exam reminder", "Remove reminder for project")
+        del_task_match = re.search(r'(?:cancel|delete|remove)\s+(?:my\s+)?(?:task\s+|reminder\s+|the\s+reminder\s+for\s+|the\s+task\s+for\s+)?(.+)', clean_text)
+        if del_task_match and ("task" in clean_text or "reminder" in clean_text):
+            if not any(w in clean_text for w in ["all", "memories", "face", "faces", "everyone"]):
+                target_name = del_task_match.group(1).strip()
+                clean_target = re.sub(r'\s+(?:task|reminder)$', '', target_name).strip()
+                if "reminder" in clean_text:
+                    return {"intent": "REMINDER_CANCEL", "target": clean_target, "params": {"task_name": clean_target, "query": text}}
+                else:
+                    return {"intent": "TASK_DELETE", "target": clean_target, "params": {"task_name": clean_target, "query": text}}
+
+        # 3.5. Task & Reminder Listing ("What are my tasks?", "Show today's tasks", "What reminders do I have today?", "Show private tasks")
+        if "private task" in clean_text or "private reminder" in clean_text:
+            return {"intent": "TASK_LIST_PRIVATE", "target": None, "params": {}}
+
+        if any(p in clean_text for p in [
+            "what reminders do i have", "what are my reminders", "show my reminders",
+            "show reminders", "list reminders", "upcoming reminders"
+        ]):
+            f_type = "today" if "today" in clean_text else "upcoming"
+            return {"intent": "REMINDER_LIST", "target": None, "params": {"filter_type": f_type}}
+
+        if any(p in clean_text for p in [
+            "what are my tasks", "what tasks do i have", "show my tasks", "show tasks",
+            "list my tasks", "list tasks", "my tasks", "show all tasks"
+        ]):
+            f_type = "all"
+            if "today" in clean_text:
+                f_type = "today"
+            elif "overdue" in clean_text:
+                f_type = "overdue"
+            elif "upcoming" in clean_text:
+                f_type = "upcoming"
+            elif "completed" in clean_text or "done" in clean_text:
+                f_type = "completed"
+            return {"intent": "TASK_LIST", "target": None, "params": {"filter_type": f_type}}
+
+        if "today's tasks" in clean_text or "tasks today" in clean_text:
+            return {"intent": "TASK_LIST", "target": None, "params": {"filter_type": "today"}}
+        if "overdue tasks" in clean_text:
+            return {"intent": "TASK_LIST", "target": None, "params": {"filter_type": "overdue"}}
+
+        # 3.6. Create Reminder ("Remind me to submit my project tomorrow at 6 PM", "Set a reminder for 7 PM to call my friend", "Remind me every Monday at 9 AM to study")
+        if (
+            clean_text.startswith("remind me") or
+            clean_text.startswith("please remind me") or
+            clean_text.startswith("set a reminder") or
+            clean_text.startswith("set reminder") or
+            clean_text.startswith("add a reminder") or
+            clean_text.startswith("create a reminder")
+        ):
+            # Exclude recall question forms ("Do you remember", "What do you remember")
+            if not any(w in clean_text for w in ["do you", "can you", "what", "who", "where", "how"]):
+                return {"intent": "REMINDER_CREATE", "target": None, "params": {"query": text}}
+
+        # 3.7. Create Task ("Create a task to finish my report", "Add a task to buy groceries", "New task submit assignment")
+        if (
+            clean_text.startswith("create a task") or
+            clean_text.startswith("create task") or
+            clean_text.startswith("add a task") or
+            clean_text.startswith("add task") or
+            clean_text.startswith("new task") or
+            clean_text.startswith("task to")
+        ):
+            return {"intent": "TASK_CREATE", "target": None, "params": {"query": text}}
+
+        # 4. Spatial / Scene Queries: Surface ("What is on the table?", "What is on the floor?")
+        if re.search(r'what(?:\s+is|\'s)\s+on\s+(?:the\s+)?(table|desk|counter|floor|ground|shelf|stand)', clean_text):
+            surf_match = re.search(r'what(?:\s+is|\'s)\s+on\s+(?:the\s+)?(table|desk|counter|floor|ground|shelf|stand)', clean_text)
+            surf_name = surf_match.group(1).strip()
+            return {"intent": "SCENE_QUERY_SURFACE", "target": surf_name, "params": {"surface": surf_name, "query": text}}
+
+        # 5. Spatial / Scene Queries: Directional ("What is to my left?", "What is to my right?")
+        if any(p in clean_text for p in ["to my left", "on my left", "on the left", "to the left", "what's to my left", "what is to my left"]):
+            return {"intent": "SCENE_QUERY_DIRECTION", "target": "left", "params": {"direction": "left", "query": text}}
+        if any(p in clean_text for p in ["to my right", "on my right", "on the right", "to the right", "what's to my right", "what is to my right"]):
+            return {"intent": "SCENE_QUERY_DIRECTION", "target": "right", "params": {"direction": "right", "query": text}}
+
+        # 6. Spatial / Scene Queries: Proximity ("What is near my laptop?", "What is near the cup?")
+        near_match = re.search(r'what(?:\s+is|\'s)\s+(?:near|next to)\s+(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
+        if near_match and not any(w in clean_text for w in ["who", "read", "money", "face", "person"]):
+            near_target = near_match.group(1).strip().rstrip("? .!")
+            return {"intent": "SCENE_QUERY_NEAR", "target": near_target, "params": {"target": near_target, "query": text}}
+
+        # 7. Spatial / Scene Queries: Path Obstruction ("Is anything blocking my path?", "Any obstacles?")
+        if any(p in clean_text for p in [
+            "blocking my path", "blocking the path", "is anything blocking", "any obstacles", "path clear", "is my path clear", "is there an obstacle"
+        ]):
+            return {"intent": "SCENE_QUERY_OBSTACLE", "target": "path", "params": {"query": text}}
+
+        # 7.5. Object Last-Seen Query ("Where was my bottle last seen?", "When was my phone last seen?")
+        last_seen_match = re.search(r'(?:where|when)\s+(?:was|were|did you)\s+(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+?)\s+(?:last seen|last located|seen last)', clean_text)
+        if last_seen_match:
+            entity_str = last_seen_match.group(1).strip().rstrip("? .!")
+            return {"intent": "OBJECT_LAST_SEEN", "target": entity_str, "params": {"object_name": entity_str, "query": text}}
+
+        # 7.6. Multi-Person Awareness Queries (SG CUBE 2.5 Feature 7)
+        # A. People Behind Query (Limitation Aware)
+        if any(p in clean_text for p in [
+            "anyone behind me", "someone behind me", "anybody behind me", "who is behind me",
+            "is there someone behind", "is there anyone behind", "person behind me"
+        ]):
+            return {"intent": "PEOPLE_BEHIND_QUERY", "target": None, "params": {}}
+
+        # B. People Count Query ("How many people are here?", "How many people do you see?")
+        if any(p in clean_text for p in [
+            "how many people are here", "how many people do you see", "how many people are around me",
+            "how many people around me", "how many people in front of me", "how many people",
+            "count people", "number of people", "how many faces"
+        ]):
+            return {"intent": "PEOPLE_COUNT", "target": None, "params": {}}
+
+        # C. People Location Query ("Where are the people?", "Where is everyone?")
+        if any(p in clean_text for p in [
+            "where are the people", "where are people located", "where is everyone",
+            "where are people", "where are they standing", "where are the persons"
+        ]):
+            return {"intent": "PEOPLE_LOCATION", "target": None, "params": {}}
+
+        # D. Known People Recognition Query ("Who do you recognize here?", "Which of my friends are here?")
+        if any(p in clean_text for p in [
+            "who do you recognize here", "do you recognize anyone here", "do you recognize anyone",
+            "who do you recognize", "which of my friends are here", "are any of my friends here", "who is recognized"
+        ]):
+            return {"intent": "KNOWN_PEOPLE_QUERY", "target": None, "params": {}}
+
+        # E. People Description Query ("Who is here?", "Tell me about the people around me")
+        if any(p in clean_text for p in [
+            "who is here", "who is around me", "who is in the room", "who is nearby",
+            "tell me about the people around me", "tell me about the people", "describe the people",
+            "describe who is here", "who all are here"
+        ]):
+            return {"intent": "PEOPLE_DESCRIPTION", "target": None, "params": {}}
+
+        # F. Explicit Person Location Query ("Where is the person?", "Where is Sharath?", "Where is the unknown person?")
+        person_loc_match = re.search(r'where\s+(?:is|are)\s+(?:the\s+)?(person|unknown\s+person|someone|anyone|man|woman)\b', clean_text)
+        if person_loc_match:
+            p_name = person_loc_match.group(1).strip()
+            return {"intent": "PERSON_LOCATION_QUERY", "target": p_name, "params": {"name": p_name, "query": text}}
+
+        where_name_match = re.search(r'^where\s+(?:is|are)\s+([a-zA-Z0-9_\s]+?)[? .!]*$', clean_text)
+        if where_name_match and not any(clean_text.startswith(p) for p in ["where is my ", "where are my ", "where is the ", "where are the ", "where is a ", "where did i"]):
+            cand_name = where_name_match.group(1).strip().rstrip("? .!")
+            if cand_name and cand_name not in ["it", "that", "this", "them", "there", "everyone", "people"]:
+                return {"intent": "PERSON_LOCATION_QUERY", "target": cand_name.title(), "params": {"name": cand_name.title(), "target_person": cand_name.title()}}
+
+        # 8. Explicit Location Recall ("Where did I say my laptop is?", "Where is my laptop?", "Where did I put my keys?")
         where_match = re.search(r'where\s+(?:did\s+i\s+say\s+|did\s+i\s+put\s+|did\s+i\s+keep\s+|is\s+|are\s+)(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
-        if where_match and not any(w in clean_text for w in ["who", "read", "money", "person", "face", "around me", "in front of me"]):
+        if where_match and not any(w in clean_text for w in ["who", "read", "money", "person", "people", "persons", "everyone", "face", "around me", "in front of me"]):
             entity_str = where_match.group(1).strip().rstrip("? .!")
             entity_clean = re.sub(r'\s+(?:is|are|located|kept|stored)$', '', entity_str).strip()
+            # If user explicitly asks "where is the <item>" without "my" or with "in front of me", prioritize object search
+            if clean_text.startswith("where is the ") or clean_text.startswith("where are the "):
+                return {"intent": "OBJECT_SEARCH", "target": entity_clean, "params": {"object_name": entity_clean}}
             return {"intent": "MEMORY_RECALL", "target": f"{entity_clean} location", "params": {"query": f"{entity_clean} location", "entity": entity_clean, "category": "location"}}
 
-        # 5. Explicit & Contextual Memory Save ("Remember that my laptop is on the study table", "Remember my favorite color is blue", "Save this")
+        # 9. Explicit & Contextual Memory Save ("Remember that my laptop is on the study table", "Remember my favorite color is blue", "Save this")
         is_save_cmd = (
             clean_text.startswith("remember") or
             clean_text.startswith("please remember") or
@@ -164,7 +372,7 @@ class CommandRouter:
                 key, fact_val = self.extract_memory_key_and_fact(text)
                 return {"intent": "MEMORY_SAVE", "target": key, "params": {"fact": fact_val, "key": key}}
 
-        # 6. Forget Specific Memory or Face ("Forget face of John", "Forget my favorite color", "Forget my laptop location")
+        # 10. Forget Specific Memory or Face ("Forget face of John", "Forget my favorite color", "Forget my laptop location")
         forget_match = re.search(r'forget (?:that|my|the|face of|person)?\s*(.+)', clean_text)
         if forget_match:
             target_str = forget_match.group(1).strip()
@@ -177,7 +385,7 @@ class CommandRouter:
                 key = re.sub(r'^(?:that|my|the|a|an)\s+', '', target_str, flags=re.IGNORECASE).strip().lower()
                 return {"intent": "MEMORY_FORGET", "target": key, "params": {"key": key}}
 
-        # 7. Self-Introduction Query ("Introduce yourself", "Who are you?", "What is SG CUBE?")
+        # 11. Self-Introduction Query ("Introduce yourself", "Who are you?", "What is SG CUBE?")
         if any(p in clean_text for p in [
             "introduce yourself", "introduce you", "tell me about yourself", "who are you",
             "give your introduction", "give an introduction", "give me your introduction",
@@ -186,22 +394,22 @@ class CommandRouter:
         ]) or clean_text in ["introduce", "introduction", "who are you", "who is sg cube", "what is sg cube"]:
             return {"intent": "INTRODUCE", "target": None, "params": {}}
 
-        # 8. Face Recognition Query ("Who is in front of me?", "Who is this?", "Who am I?")
+        # 12. Face Recognition Query ("Who is in front of me?", "Who is this?", "Who am I?")
         if any(p in clean_text for p in [
             "who is in front of me", "who is this", "who is that", "who am i",
             "do you know this person", "who just entered", "do you recognize",
-            "who is here", "identify face", "who is looking"
+            "identify face", "who is looking"
         ]):
             return {"intent": "FACE_IDENTIFY", "target": None, "params": {}}
 
-        # 9. Face Listing ("Who do you know?", "List people", "Show enrolled faces")
+        # 13. Face Listing ("Who do you know?", "List people", "Show enrolled faces")
         if any(p in clean_text for p in [
             "who do you know", "list people", "who do you remember", "list all faces",
             "show how many people", "saved in face memory", "saved faces", "enrolled faces"
         ]):
             return {"intent": "FACE_LIST", "target": None, "params": {}}
 
-        # 10. Memory Recall Query ("What is my favorite color?", "What is my project called?", "Do you remember...")
+        # 14. Memory Recall Query ("What is my favorite color?", "What is my project called?", "Do you remember...")
         if any(p in clean_text for p in [
             "do you remember", "what is my", "what's my", "do you know my", "who is",
             "what do you know about", "what do you remember", "tell me what you remember",
@@ -212,29 +420,107 @@ class CommandRouter:
             if not any(w in clean_text for w in ["in front of me", "around me", "this person", "this face", "this"]):
                 return {"intent": "MEMORY_RECALL", "target": clean_text, "params": {"query": clean_text}}
 
-        # 11. Currency Query
+        # 15. Currency Query
         if any(p in clean_text for p in ["how much money", "what currency", "how much is this", "what denomination", "rupee note", "banknote"]):
             return {"intent": "CURRENCY", "target": None, "params": {}}
 
-        # 12. OCR / Text Reading Query
-        if any(p in clean_text for p in ["read this", "read the sign", "read text", "read document", "read label", "what does this say"]):
+        # 15.5. Intelligent Document Understanding Queries (SG CUBE 2.5 Feature 8)
+        # A. Document Clear / Reset
+        if any(p in clean_text for p in ["clear document", "clear active document", "reset document", "forget document"]):
+            return {"intent": "DOCUMENT_CLEAR", "target": None, "params": {}}
+
+        # B. Document Repeat
+        if any(p in clean_text for p in ["repeat that document", "repeat document", "repeat the document", "repeat last document", "repeat document summary"]):
+            return {"intent": "DOCUMENT_REPEAT", "target": None, "params": {}}
+
+        # C. Document In-Text Search ("search for total in the document", "find invoice in document")
+        doc_search_match = re.search(r'(?:search for|find|look for|does the document mention|is there)\s+([a-zA-Z0-9_\s]+?)\s+(?:in|on)\s+(?:the\s+)?(?:document|receipt|bill|page|menu|label)', clean_text)
+        if doc_search_match:
+            sterm = doc_search_match.group(1).strip()
+            return {"intent": "DOCUMENT_SEARCH", "target": sterm, "params": {"query": sterm, "term": sterm}}
+
+        # D. Document Summary & Type
+        if any(p in clean_text for p in [
+            "summarize this document", "summarize the document", "summarize document",
+            "summarize this receipt", "summarize the receipt", "summarize receipt",
+            "summarize this bill", "summarize the bill", "summarize bill",
+            "summarize this menu", "summarize the menu", "summarize menu",
+            "what is this document about", "give me a summary of this document",
+            "give me a summary", "document summary", "what kind of document is this",
+            "what type of document is this", "what sort of document is this"
+        ]):
+            return {"intent": "DOCUMENT_SUMMARY", "target": None, "params": {}}
+
+        # E. Document Title / Heading
+        if any(p in clean_text for p in [
+            "what is the title", "what is the document title", "read document title",
+            "read the title", "what is the heading", "read the heading",
+            "what is the name of this document", "document title"
+        ]):
+            return {"intent": "DOCUMENT_TITLE", "target": None, "params": {}}
+
+        # F. Document Total / Price
+        if any(p in clean_text for p in [
+            "what is the total", "what is the total amount", "what's the total bill",
+            "how much is the total", "what is the total price", "how much is this bill",
+            "what is the grand total", "find the total", "read the total", "total amount",
+            "what is the price"
+        ]):
+            return {"intent": "DOCUMENT_TOTAL", "target": None, "params": {}}
+
+        # G. Document Key-Value Fields
+        if any(p in clean_text for p in [
+            "what are the key fields", "read the fields", "what are the details",
+            "extract fields", "what fields are on this document", "what are the key details",
+            "extract key values", "show key values", "read key fields", "key values"
+        ]):
+            return {"intent": "DOCUMENT_FIELDS", "target": None, "params": {}}
+
+        # H. Document Table
+        if any(p in clean_text for p in [
+            "read the table", "read table", "what is in the table",
+            "read table contents", "read rows in the table", "is there a table",
+            "read table data", "table contents"
+        ]):
+            return {"intent": "DOCUMENT_TABLE", "target": None, "params": {}}
+
+        # I. Document Full Read
+        if any(p in clean_text for p in [
+            "read this document", "read the document", "read document",
+            "read this receipt", "read the receipt", "read receipt",
+            "read this bill", "read the bill", "read bill",
+            "read this menu", "read the menu", "read menu",
+            "read the page", "read this page", "read the form", "read this form",
+            "read out this document", "read out the document",
+            "read the entire document", "read all text on this page"
+        ]):
+            return {"intent": "DOCUMENT_READ", "target": None, "params": {}}
+
+        # 16. OCR / Text Reading Query (Fallback)
+        if any(p in clean_text for p in ["read this", "read the sign", "read text", "read label", "what does this say"]):
             return {"intent": "OCR", "target": None, "params": {}}
 
-        # 13. Environment Query
-        if any(p in clean_text for p in ["what is around me", "describe the environment", "describe my surroundings", "what is in front of me"]):
-            return {"intent": "ENVIRONMENT", "target": None, "params": {}}
+        # 17. Environment / Scene Describe Query ("What do you see?", "Describe my surroundings", "What is around me?", "What is in front of me?")
+        if any(p in clean_text for p in ["what do you see", "describe what you see", "describe the scene", "what do you observe"]):
+            return {"intent": "SCENE_DESCRIBE", "target": None, "params": {"query": text}}
 
-        # 14. Object Search Query ("Find my phone", "Look for bottle")
-        find_match = re.search(r'(?:find|can you see|is there a|look for)\s*(?:my|a|the)?\s*([a-zA-Z0-9_\s]+)', clean_text)
+        if any(p in clean_text for p in [
+            "what is around me", "what's around me", "describe the environment",
+            "describe my surroundings", "what is in front of me", "what's in front of me"
+        ]):
+            return {"intent": "ENVIRONMENT", "target": None, "params": {"query": text}}
+
+        # 18. Object Search Query ("Find my phone", "Look for bottle", "Where is the bottle", "Can you find my keys", "Search for my phone")
+        find_match = re.search(r'(?:find|can you see|can you find|is there a|look for|search for|start searching for)\s*(?:my|a|the)?\s*([a-zA-Z0-9_\s]+)', clean_text)
         if find_match and not any(w in clean_text for w in ["who", "read", "money"]):
             obj_name = find_match.group(1).strip()
             return {"intent": "OBJECT_SEARCH", "target": obj_name, "params": {"object_name": obj_name}}
 
-        # 15. Safety / Hazard Query
+        # 19. Safety / Hazard Query
         if any(p in clean_text for p in ["are there stairs", "is it safe", "any obstacles", "anything dangerous"]):
             return {"intent": "SAFETY", "target": None, "params": {}}
 
-        # 16. Settings Toggles
+        # 20. Settings Toggles
         if "turn greetings off" in clean_text or "stop greetings" in clean_text:
             return {"intent": "SETTINGS", "target": "greetings", "params": {"setting": "greeting_enabled", "value": False}}
 
@@ -247,23 +533,23 @@ class CommandRouter:
         if "turn environment monitoring off" in clean_text or "continuous monitoring off" in clean_text:
             return {"intent": "SETTINGS", "target": "continuous", "params": {"setting": "environment_monitor_enabled", "value": False}}
 
-        # 17. Color Identification Query
+        # 21. Color Identification Query
         if any(p in clean_text for p in ["what color", "tell me the color", "identify color", "color of this"]):
             return {"intent": "COLOR_IDENTIFY", "target": None, "params": {}}
 
-        # 18. Light Level Check
+        # 22. Light Level Check
         if any(p in clean_text for p in ["are the lights on", "is it dark", "check light level", "how is the light", "is the room lit"]):
             return {"intent": "LIGHT_LEVEL_CHECK", "target": None, "params": {}}
 
-        # 19. Product Scan
+        # 23. Product Scan
         if any(p in clean_text for p in ["scan product", "scan barcode", "scan qr", "read expiration", "expiry date", "what medicine", "is this medicine"]):
             return {"intent": "PRODUCT_SCAN", "target": None, "params": {}}
 
-        # 20. Sleep / Deactivate Command
+        # 24. Sleep / Deactivate Command
         if any(p in clean_text for p in ["go to sleep", "stop listening", "sleep mode", "deactivate"]):
             return {"intent": "SLEEP", "target": None, "params": {}}
 
-        # 21. Voice Security Commands (SG CUBE 2.5)
+        # 25. Voice Security Commands (SG CUBE 2.5)
         if any(p in clean_text for p in ["lock security", "lock session", "revoke security", "lock voice security", "lock my session"]):
             return {"intent": "SECURITY_LOCK", "target": None, "params": {}}
 
@@ -282,6 +568,70 @@ class CommandRouter:
 
         if any(p in clean_text for p in ["is security enabled", "security status", "check security status", "check voice security"]):
             return {"intent": "SECURITY_STATUS", "target": None, "params": {}}
+
+        # 26. System Automation Commands (SG CUBE 2.5 Feature 9)
+        # A. Lock Workstation / Screen
+        if any(p in clean_text for p in [
+            "lock my workstation", "lock workstation", "lock the workstation",
+            "lock my pc", "lock the pc", "lock pc", "lock computer", "lock the computer",
+            "lock screen", "lock the screen", "lock my computer"
+        ]):
+            return {"intent": "AUTOMATION_LOCK_DEVICE", "target": "workstation", "params": {}}
+
+        # B. Automation Status & Permissions
+        if any(p in clean_text for p in [
+            "automation status", "automation permissions", "check automation status",
+            "system automation status", "show automation permissions", "check automation permissions"
+        ]):
+            return {"intent": "AUTOMATION_STATUS", "target": None, "params": {}}
+
+        # C. Close Application ("Close calculator", "Exit notepad", "Quit calculator", "Close file explorer", "Close browser")
+        close_app_match = re.search(
+            r'^(?:please\s+)?(?:close|exit|quit|terminate|shut\s+down)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|file\s+explorer|explorer|files|browser|web\s+browser|chrome|edge|firefox)\b',
+            clean_text
+        )
+        if close_app_match:
+            app_t = close_app_match.group(1).strip()
+            return {"intent": "AUTOMATION_CLOSE_APP", "target": app_t, "params": {"app_name": app_t, "target": app_t}}
+
+        # D. Open Application ("Open calculator", "Launch notepad", "Start file explorer", "Open browser")
+        open_app_match = re.search(
+            r'^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|text\s+editor|file\s+explorer|explorer|browser|web\s+browser|chrome|edge|firefox)\b',
+            clean_text
+        )
+        if open_app_match:
+            app_t = open_app_match.group(1).strip()
+            return {"intent": "AUTOMATION_OPEN_APP", "target": app_t, "params": {"app_name": app_t, "target": app_t}}
+
+        # E. Open URL / Website ("Open website google.com", "Open url wikipedia.org", "Go to github.com", "Open site youtube.com")
+        open_url_match = re.search(
+            r'^(?:please\s+)?(?:open|go\s+to|visit|navigate\s+to)\s+(?:website\s+|site\s+|webpage\s+|url\s+|link\s+)?(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9.\-]+\.(?:com|org|net|edu|gov|io|ai|dev)(?:/[^\s]*)?)$',
+            clean_text
+        )
+        if open_url_match:
+            url_t = open_url_match.group(1).strip()
+            return {"intent": "AUTOMATION_OPEN_URL", "target": url_t, "params": {"url": url_t, "target": url_t}}
+
+        # F. Open Safe Folder ("Open documents folder", "Open my downloads", "Open desktop folder", "Open pictures folder")
+        open_folder_match = re.search(
+            r'^(?:please\s+)?(?:open|show|explore)\s+(?:my\s+|the\s+)?(?:folder\s+)?(documents|downloads|desktop|pictures|photos|music|videos|home)\s*(?:folder)?$',
+            clean_text
+        )
+        if open_folder_match:
+            folder_t = open_folder_match.group(1).strip()
+            return {"intent": "AUTOMATION_OPEN_FOLDER", "target": folder_t, "params": {"folder": folder_t, "target": folder_t}}
+
+        # G. Copy Text to Clipboard ("Copy text meeting at 3 PM", "Copy this text: ...", "Copy to clipboard: ...")
+        copy_text_match = re.search(
+            r'^(?:please\s+)?(?:copy\s+(?:the\s+)?(?:following\s+)?(?:text\s+)?(?:to\s+clipboard\s*)?:?\s*(.+)|copy\s+(.+)\s+to\s+clipboard)$',
+            clean_text
+        )
+        if copy_text_match and not any(w in clean_text for w in ["face", "profile", "memory", "task", "reminder"]):
+            text_val = copy_text_match.group(1) or copy_text_match.group(2)
+            if text_val:
+                clean_copy_val = re.sub(r'^(?:text\s*:\s*|that\s*:\s*|this\s*:\s*)', '', text_val.strip(), flags=re.IGNORECASE).strip()
+                if clean_copy_val:
+                    return {"intent": "AUTOMATION_COPY_TEXT", "target": clean_copy_val, "params": {"text": clean_copy_val, "target": clean_copy_val}}
 
         # Fallback to General Gemini Live Reasoning
         return {"intent": "GENERAL", "target": None, "params": {}}

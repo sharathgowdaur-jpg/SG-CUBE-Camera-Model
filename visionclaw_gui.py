@@ -642,7 +642,7 @@ class SGCubeApp:
         if os.name == 'nt':
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SGCUBE.Assistant.2.4.6")
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SGCUBE.Assistant.2.5.0")
             except Exception:
                 pass
 
@@ -1038,17 +1038,17 @@ class SGCubeApp:
 
         self.hud_obj_title = tk.Label(
             self.hud_obj_card,
-            text="OBJECTS",
+            text="SCENE",
             bg="#050505",
             fg=COLOR_CYAN_PRIMARY,
             font=("Segoe UI", 8, "bold"),
             anchor="w"
         )
-        self.hud_obj_title.pack(fill=tk.X, pady=(0, 6))
+        self.hud_obj_title.pack(fill=tk.X, pady=(0, 4))
 
         self.hud_obj_labels = []
-        for _ in range(5):
-            lbl = tk.Label(self.hud_obj_card, text="", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w")
+        for _ in range(6):
+            lbl = tk.Label(self.hud_obj_card, text="", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w", wraplength=145, justify=tk.LEFT)
             lbl.pack(fill=tk.X, pady=1)
             self.hud_obj_labels.append(lbl)
 
@@ -1376,6 +1376,13 @@ class SGCubeApp:
                             lbl.config(text="No recent history", fg=COLOR_TEXT_MUTED)
                         else:
                             lbl.config(text="", fg=COLOR_TEXT_MUTED)
+
+                # Show active conversation context state if present
+                if hasattr(self, 'engine') and hasattr(self.engine, 'context'):
+                    ctx_sum = self.engine.context.get_context_summary()
+                    if ctx_sum.get("active_entity") and len(rows) < 3:
+                        lbl_ctx = self.info_history_labels[min(len(rows), 2)]
+                        lbl_ctx.config(text=f"● Context: {ctx_sum['active_entity']} ({ctx_sum['state']})", fg=COLOR_CYAN_PRIMARY)
         except Exception:
             pass
 
@@ -1796,8 +1803,21 @@ class SGCubeApp:
             faces = data.get("faces", [])
             safety = data.get("safety", {})
 
-            # Person
-            if faces:
+            # Person / Multi-Person Awareness
+            people_info = data.get("people_awareness") or env.get("people_awareness")
+            if people_info:
+                tot = people_info.get("total_people", 0)
+                known_names = people_info.get("known_names", [])
+                if tot == 0:
+                    self.hud_env_person_lbl.config(text="● People: None", fg="#8B96A5")
+                elif known_names:
+                    names_str = ", ".join(known_names[:2])
+                    unk = people_info.get("unknown_count", 0)
+                    suffix = f" (+{unk})" if unk > 0 else ""
+                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {names_str}{suffix}", fg="#00EDFF")
+                else:
+                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {tot} unknown", fg="#F1F5F9")
+            elif faces:
                 names = [f.get("name") or "Person" for f in faces]
                 self.hud_env_person_lbl.config(text=f"● Person: {', '.join(names[:2])}", fg="#F1F5F9")
             else:
@@ -1820,21 +1840,36 @@ class SGCubeApp:
             else:
                 self.hud_env_safety_lbl.config(text="⚠ Safety: Clear", fg=COLOR_STATUS_GREEN)
 
-            # 2. Update Objects Card
+            # 2. Update Scene Card
+            scene_data = data.get("scene", {})
             objects = data.get("objects", [])
+            scene_objects = env.get("scene_objects", []) or scene_data.get("objects", [])
+            obstructions = env.get("obstructions", []) or scene_data.get("obstructions", [])
+            people_cnt = len(faces)
+            obj_cnt = len(scene_objects) if scene_objects else len(objects)
+
             if hasattr(self, 'hud_obj_labels') and self.hud_obj_labels:
+                # Group items by zone
+                left_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("left", "center_left")]
+                right_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("right", "center_right")]
+                center_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") == "center"]
+
+                lines = [
+                    f"● People: {people_cnt} | Objs: {obj_cnt}",
+                    f"◀ Left: {', '.join(left_items[:2]) if left_items else 'None'}",
+                    f"▲ Center: {', '.join(center_items[:3]) if center_items else 'None'}",
+                    f"▶ Right: {', '.join(right_items[:2]) if right_items else 'None'}"
+                ]
+                if obstructions:
+                    lines.append(f"⚠ Obstacle: {obstructions[0].get('zone', 'center').title()}")
+                else:
+                    lines.append("⚠ Path: Clear")
+
                 for idx, lbl in enumerate(self.hud_obj_labels):
-                    if idx < len(objects):
-                        obj = objects[idx]
-                        sp = obj.get("spatial", {})
-                        dist_verb = sp.get("distance_verbal", "near")
-                        h_verb = sp.get("h_zone", "center")
-                        lbl.config(text=f"• Item {idx+1}: {h_verb.title()} ({dist_verb})", fg="#F1F5F9")
+                    if idx < len(lines):
+                        lbl.config(text=lines[idx], fg="#F1F5F9" if "⚠" not in lines[idx] else (COLOR_ALERT_RED if obstructions else COLOR_STATUS_GREEN))
                     else:
-                        if idx == 0 and not objects:
-                            lbl.config(text="No objects in view", fg="#8B96A5")
-                        else:
-                            lbl.config(text="", fg="#8B96A5")
+                        lbl.config(text="", fg="#8B96A5")
         except Exception:
             pass
 
@@ -3101,11 +3136,20 @@ class SGCubeApp:
                 self.engine.history.clear_all_history()
                 load_sessions()
 
+        def reset_active_context():
+            if hasattr(self, 'engine') and hasattr(self.engine, 'context'):
+                self.engine.context.reset_context()
+            self.show_context_alert("Conversation context cleared.", color=COLOR_CYAN_PRIMARY)
+            messagebox.showinfo("Context Cleared", "Active conversation context has been reset to IDLE.\nPronouns and follow-ups will start fresh.", parent=dialog)
+
         btn_del = tk.Button(bottom_bar, text="Delete Selected", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_ALERT_RED, relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=delete_selected)
         btn_del.pack(side=tk.LEFT, padx=(0, 8))
 
         btn_clear_all = tk.Button(bottom_bar, text="Clear All History", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=14, pady=5, cursor="hand2", command=clear_all)
         btn_clear_all.pack(side=tk.LEFT)
+
+        btn_reset_ctx = tk.Button(bottom_bar, text="Clear Context", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=reset_active_context)
+        btn_reset_ctx.pack(side=tk.LEFT, padx=(8, 0))
 
         btn_close = tk.Button(bottom_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=16, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
         btn_close.pack(side=tk.RIGHT)
@@ -4053,6 +4097,70 @@ class SGCubeApp:
 
         btn_lck_p = tk.Button(sec_btn_row, text="Lock Now", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_lock_now)
         btn_lck_p.pack(side=tk.LEFT, padx=1)
+
+        # 🔔 Proactive Assistive Alerts Card (SG CUBE 2.5 Feature 10)
+        alerts_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        alerts_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        alerts_title = tk.Label(alerts_card, text="🔔 Proactive Assistive Alerts (Feature 10)", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        alerts_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_alert_status_str():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                summary = self.engine.alerts.get_status_summary()
+                mode_name = summary.get("mode", "NORMAL")
+                is_p = summary.get("is_paused", False)
+                rem = summary.get("pause_remaining_seconds", 0)
+                if is_p:
+                    p_str = f"Paused ({int(rem)}s remaining)" if rem > 0 else "Paused"
+                    return f"Status: {p_str} | Mode: {mode_name}", COLOR_WARNING_GOLD
+                return f"Status: Active | Mode: {mode_name} ({summary.get('queued_count', 0)} queued)", COLOR_STATUS_GREEN
+            return "Status: Ready", COLOR_STATUS_GREEN
+
+        a_txt, a_col = get_alert_status_str()
+        lbl_alerts_status = tk.Label(alerts_card, text=a_txt, bg=COLOR_PANEL_SECONDARY, fg=a_col, font=("Segoe UI", 9, "bold"))
+        lbl_alerts_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        mode_frame = tk.Frame(alerts_card, bg=COLOR_PANEL_SECONDARY)
+        mode_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        tk.Label(mode_frame, text="Alert Mode:", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 6))
+
+        current_mode = self.engine.alerts.mode.value if hasattr(self.engine, 'alerts') and self.engine.alerts else "NORMAL"
+        var_alert_mode = tk.StringVar(value=current_mode)
+        opt_modes = ["OFF", "MINIMAL", "NORMAL", "ASSISTIVE"]
+
+        def on_mode_changed(*args):
+            new_m = var_alert_mode.get()
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.set_mode(new_m)
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        var_alert_mode.trace_add("write", on_mode_changed)
+
+        opt_mode_menu = tk.OptionMenu(mode_frame, var_alert_mode, *opt_modes)
+        opt_mode_menu.config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        opt_mode_menu["menu"].config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8))
+        opt_mode_menu.pack(side=tk.LEFT, padx=(0, 8))
+
+        def cmd_pause_alerts_5m():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.pause_alerts(duration_seconds=300.0)
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        def cmd_resume_alerts():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.resume_alerts()
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        btn_pause_a = tk.Button(mode_frame, text="Pause 5m", bg=COLOR_PANEL_DEEP, fg=COLOR_WARNING_GOLD, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=2, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_pause_alerts_5m)
+        btn_pause_a.pack(side=tk.LEFT, padx=2)
+
+        btn_resume_a = tk.Button(mode_frame, text="Resume", bg=COLOR_PANEL_DEEP, fg=COLOR_STATUS_GREEN, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=2, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_resume_alerts)
+        btn_resume_a.pack(side=tk.LEFT, padx=2)
 
         sc_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
         sc_card.pack(fill=tk.X, pady=(10, 10), ipady=6)

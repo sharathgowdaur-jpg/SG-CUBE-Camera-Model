@@ -1,9 +1,9 @@
 @echo off
-title SG CUBE 2.4.6 Windows Installer
+title SG CUBE 2.5.0 Windows Installer
 setlocal enabledelayedexpansion
 
 echo ============================================================
-echo        SG CUBE 2.4.6 — OFFICIAL WINDOWS INSTALLER          
+echo        SG CUBE 2.5.0 — OFFICIAL WINDOWS INSTALLER          
 echo ============================================================
 echo.
 
@@ -55,7 +55,7 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "SGCubeWakeListe
 
 echo.
 echo ============================================================
-echo    SUCCESS: SG CUBE 2.4.6 HAS BEEN SUCCESSFULLY INSTALLED!  
+echo    SUCCESS: SG CUBE 2.5.0 HAS BEEN SUCCESSFULLY INSTALLED!  
 echo ============================================================
 echo   Location: !INSTALL_DIR!
 echo   Launch from: Desktop Shortcut, Start Menu, or say "Hey SG CUBE"
