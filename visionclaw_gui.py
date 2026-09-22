@@ -642,7 +642,7 @@ class SGCubeApp:
         if os.name == 'nt':
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SGCUBE.Assistant.2.4.6")
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SGCUBE.Assistant.2.5.0")
             except Exception:
                 pass
 
@@ -1038,17 +1038,17 @@ class SGCubeApp:
 
         self.hud_obj_title = tk.Label(
             self.hud_obj_card,
-            text="OBJECTS",
+            text="SCENE",
             bg="#050505",
             fg=COLOR_CYAN_PRIMARY,
             font=("Segoe UI", 8, "bold"),
             anchor="w"
         )
-        self.hud_obj_title.pack(fill=tk.X, pady=(0, 6))
+        self.hud_obj_title.pack(fill=tk.X, pady=(0, 4))
 
         self.hud_obj_labels = []
-        for _ in range(5):
-            lbl = tk.Label(self.hud_obj_card, text="", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w")
+        for _ in range(6):
+            lbl = tk.Label(self.hud_obj_card, text="", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w", wraplength=145, justify=tk.LEFT)
             lbl.pack(fill=tk.X, pady=1)
             self.hud_obj_labels.append(lbl)
 
@@ -1376,6 +1376,13 @@ class SGCubeApp:
                             lbl.config(text="No recent history", fg=COLOR_TEXT_MUTED)
                         else:
                             lbl.config(text="", fg=COLOR_TEXT_MUTED)
+
+                # Show active conversation context state if present
+                if hasattr(self, 'engine') and hasattr(self.engine, 'context'):
+                    ctx_sum = self.engine.context.get_context_summary()
+                    if ctx_sum.get("active_entity") and len(rows) < 3:
+                        lbl_ctx = self.info_history_labels[min(len(rows), 2)]
+                        lbl_ctx.config(text=f"● Context: {ctx_sum['active_entity']} ({ctx_sum['state']})", fg=COLOR_CYAN_PRIMARY)
         except Exception:
             pass
 
@@ -1796,8 +1803,21 @@ class SGCubeApp:
             faces = data.get("faces", [])
             safety = data.get("safety", {})
 
-            # Person
-            if faces:
+            # Person / Multi-Person Awareness
+            people_info = data.get("people_awareness") or env.get("people_awareness")
+            if people_info:
+                tot = people_info.get("total_people", 0)
+                known_names = people_info.get("known_names", [])
+                if tot == 0:
+                    self.hud_env_person_lbl.config(text="● People: None", fg="#8B96A5")
+                elif known_names:
+                    names_str = ", ".join(known_names[:2])
+                    unk = people_info.get("unknown_count", 0)
+                    suffix = f" (+{unk})" if unk > 0 else ""
+                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {names_str}{suffix}", fg="#00EDFF")
+                else:
+                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {tot} unknown", fg="#F1F5F9")
+            elif faces:
                 names = [f.get("name") or "Person" for f in faces]
                 self.hud_env_person_lbl.config(text=f"● Person: {', '.join(names[:2])}", fg="#F1F5F9")
             else:
@@ -1820,21 +1840,36 @@ class SGCubeApp:
             else:
                 self.hud_env_safety_lbl.config(text="⚠ Safety: Clear", fg=COLOR_STATUS_GREEN)
 
-            # 2. Update Objects Card
+            # 2. Update Scene Card
+            scene_data = data.get("scene", {})
             objects = data.get("objects", [])
+            scene_objects = env.get("scene_objects", []) or scene_data.get("objects", [])
+            obstructions = env.get("obstructions", []) or scene_data.get("obstructions", [])
+            people_cnt = len(faces)
+            obj_cnt = len(scene_objects) if scene_objects else len(objects)
+
             if hasattr(self, 'hud_obj_labels') and self.hud_obj_labels:
+                # Group items by zone
+                left_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("left", "center_left")]
+                right_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("right", "center_right")]
+                center_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") == "center"]
+
+                lines = [
+                    f"● People: {people_cnt} | Objs: {obj_cnt}",
+                    f"◀ Left: {', '.join(left_items[:2]) if left_items else 'None'}",
+                    f"▲ Center: {', '.join(center_items[:3]) if center_items else 'None'}",
+                    f"▶ Right: {', '.join(right_items[:2]) if right_items else 'None'}"
+                ]
+                if obstructions:
+                    lines.append(f"⚠ Obstacle: {obstructions[0].get('zone', 'center').title()}")
+                else:
+                    lines.append("⚠ Path: Clear")
+
                 for idx, lbl in enumerate(self.hud_obj_labels):
-                    if idx < len(objects):
-                        obj = objects[idx]
-                        sp = obj.get("spatial", {})
-                        dist_verb = sp.get("distance_verbal", "near")
-                        h_verb = sp.get("h_zone", "center")
-                        lbl.config(text=f"• Item {idx+1}: {h_verb.title()} ({dist_verb})", fg="#F1F5F9")
+                    if idx < len(lines):
+                        lbl.config(text=lines[idx], fg="#F1F5F9" if "⚠" not in lines[idx] else (COLOR_ALERT_RED if obstructions else COLOR_STATUS_GREEN))
                     else:
-                        if idx == 0 and not objects:
-                            lbl.config(text="No objects in view", fg="#8B96A5")
-                        else:
-                            lbl.config(text="", fg="#8B96A5")
+                        lbl.config(text="", fg="#8B96A5")
         except Exception:
             pass
 
@@ -2799,9 +2834,9 @@ class SGCubeApp:
         if not user_text:
             return False
 
-        print(f"[VOICE] user_speech_turn_finalized: '{user_text}'")
-        # Store full user message in persistent conversation history
-        self.engine.history.add_message(self.active_history_session_id, "user", user_text)
+        is_security_input = hasattr(self.engine, 'security') and (self.engine.security.current_state.value != "IDLE")
+        log_text = "[VOICE_PASSWORD_REDACTED]" if is_security_input else user_text
+        print(f"[VOICE] user_speech_turn_finalized: '{log_text}'")
 
         local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id)
         if local_response:
@@ -2812,6 +2847,10 @@ class SGCubeApp:
             self._clear_playback_queue()
 
             self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", local_response))
+            if is_security_input:
+                self.engine.history.add_message(self.active_history_session_id, "user", "[VOICE_PASSWORD_REDACTED]")
+            else:
+                self.engine.history.add_message(self.active_history_session_id, "user", user_text)
             self.engine.history.add_message(self.active_history_session_id, "assistant", local_response)
             
             # Immediately update Quick Memory card in GUI HUD
@@ -3097,11 +3136,20 @@ class SGCubeApp:
                 self.engine.history.clear_all_history()
                 load_sessions()
 
+        def reset_active_context():
+            if hasattr(self, 'engine') and hasattr(self.engine, 'context'):
+                self.engine.context.reset_context()
+            self.show_context_alert("Conversation context cleared.", color=COLOR_CYAN_PRIMARY)
+            messagebox.showinfo("Context Cleared", "Active conversation context has been reset to IDLE.\nPronouns and follow-ups will start fresh.", parent=dialog)
+
         btn_del = tk.Button(bottom_bar, text="Delete Selected", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_ALERT_RED, relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=delete_selected)
         btn_del.pack(side=tk.LEFT, padx=(0, 8))
 
         btn_clear_all = tk.Button(bottom_bar, text="Clear All History", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=14, pady=5, cursor="hand2", command=clear_all)
         btn_clear_all.pack(side=tk.LEFT)
+
+        btn_reset_ctx = tk.Button(bottom_bar, text="Clear Context", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=reset_active_context)
+        btn_reset_ctx.pack(side=tk.LEFT, padx=(8, 0))
 
         btn_close = tk.Button(bottom_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=16, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
         btn_close.pack(side=tk.RIGHT)
@@ -3109,10 +3157,10 @@ class SGCubeApp:
         load_sessions()
 
     def open_memory_dialog(self):
-        """ Persistent Memory Management Modal Dialog """
+        """ Structured Context Memory Management Modal Dialog """
         dialog = tk.Toplevel(self.root)
-        dialog.title("SG CUBE — Persistent Memory Database")
-        dialog.geometry("560x580")
+        dialog.title("SG CUBE — Personal Memory Database")
+        dialog.geometry("620x640")
         dialog.configure(bg=COLOR_BG_PRIMARY)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -3120,40 +3168,99 @@ class SGCubeApp:
 
         dialog.bind("<Escape>", lambda e: animate_dialog_close(dialog))
 
-        title_lbl = tk.Label(dialog, text="✦ Stored Long-Term Memories", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 13, "bold"))
-        title_lbl.pack(anchor="w", padx=20, pady=(15, 10))
+        # Title Bar
+        title_lbl = tk.Label(dialog, text="🧠 Stored Personal Context & Memories", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 13, "bold"))
+        title_lbl.pack(anchor="w", padx=20, pady=(15, 8))
 
-        # Search Bar
-        search_frame = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
-        search_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        # Filter & Search Bar
+        filter_frame = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
+        filter_frame.pack(fill=tk.X, padx=20, pady=(0, 8))
 
-        search_entry = tk.Entry(search_frame, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
-        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0, 8))
+        tk.Label(filter_frame, text="Category:", bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 4))
+        
+        categories_list = ["ALL", "PERSONAL", "PREFERENCE", "LOCATION", "OBJECT", "TASK", "ROUTINE", "CONTACT", "PROJECT", "DEVICE", "OTHER"]
+        var_selected_cat = tk.StringVar(value="ALL")
+        opt_cat = tk.OptionMenu(filter_frame, var_selected_cat, *categories_list)
+        opt_cat.config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        opt_cat["menu"].config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8))
+        opt_cat.pack(side=tk.LEFT, padx=(0, 8))
 
-        mem_card = tk.Frame(dialog, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
-        mem_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+        search_entry = tk.Entry(filter_frame, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 6))
 
-        mem_box = scrolledtext.ScrolledText(mem_card, wrap=tk.WORD, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, height=14)
-        mem_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        # Main Split Frame: Left Listbox of keys/facts, Right Detailed Inspector Box
+        main_split = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
+        main_split.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+
+        # Left Listbox
+        list_card = tk.Frame(main_split, bg=COLOR_PANEL_SECONDARY, width=280, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        list_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+
+        tk.Label(list_card, text="MEMORY ENTRIES", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=10, pady=(6, 4))
+        mem_listbox = tk.Listbox(list_card, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, selectbackground=COLOR_BORDER_ACTIVE, selectforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0, highlightthickness=0)
+        mem_listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        # Right Detail Box
+        detail_card = tk.Frame(main_split, bg=COLOR_PANEL_SECONDARY, width=300, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        detail_card.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        tk.Label(detail_card, text="MEMORY DETAILS", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=10, pady=(6, 4))
+        detail_box = scrolledtext.ScrolledText(detail_card, wrap=tk.WORD, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0)
+        detail_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        active_memories_data: List[Dict[str, Any]] = []
 
         def refresh_memories():
-            mem_box.configure(state=tk.NORMAL)
-            mem_box.delete("1.0", tk.END)
+            nonlocal active_memories_data
+            mem_listbox.delete(0, tk.END)
             kw = search_entry.get().strip()
+            cat = var_selected_cat.get()
+            selected_cat = None if cat == "ALL" else cat.lower()
+
             if kw:
-                mems = self.engine.memory.search_memories(kw)
+                mems = self.engine.memory.search_memories(kw, category=selected_cat)
             else:
-                mems = self.engine.memory.list_all_memories()
+                mems = self.engine.memory.list_all_memories(category=selected_cat)
 
+            active_memories_data = mems
             if mems:
-                for idx, m in enumerate(mems, 1):
-                    mem_box.insert(tk.END, f"{idx}. [{m['category'].upper()}] {m['fact_value']}\n   (Key: '{m['key_phrase']}')\n\n")
+                for m in mems:
+                    cat_tag = m['category'].upper()
+                    mem_listbox.insert(tk.END, f"[{cat_tag}] {m['key_phrase']}")
+                mem_listbox.select_set(0)
+                show_memory_detail(0)
             else:
-                mem_box.insert(tk.END, "No matching stored memories found.\nClick 'Add Fact' or say 'Remember that...' to save facts.\n")
-            mem_box.configure(state=tk.DISABLED)
+                detail_box.configure(state=tk.NORMAL)
+                detail_box.delete("1.0", tk.END)
+                detail_box.insert(tk.END, "No stored memories found.\nClick '+ Add Fact' or say 'Remember that...' to store personal facts.\n")
+                detail_box.configure(state=tk.DISABLED)
 
-        btn_search = tk.Button(search_frame, text="Search", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_BORDER_ACTIVE, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=12, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=refresh_memories)
+        def show_memory_detail(idx):
+            if idx < 0 or idx >= len(active_memories_data):
+                return
+            m = active_memories_data[idx]
+            detail_box.configure(state=tk.NORMAL)
+            detail_box.delete("1.0", tk.END)
+            created_str = time.strftime('%Y-%m-%d %I:%M %p', time.localtime(m.get('created_at', time.time())))
+            updated_str = time.strftime('%Y-%m-%d %I:%M %p', time.localtime(m.get('updated_at', time.time())))
+            detail_box.insert(tk.END, f"Category:  {m['category'].upper()}\n")
+            detail_box.insert(tk.END, f"Key:       {m['key_phrase']}\n")
+            detail_box.insert(tk.END, f"Source:    {m.get('source', 'voice_explicit')}\n")
+            detail_box.insert(tk.END, f"Created:   {created_str}\n")
+            detail_box.insert(tk.END, f"Updated:   {updated_str}\n\n")
+            detail_box.insert(tk.END, f"Fact Content:\n{m['fact_value']}\n")
+            detail_box.configure(state=tk.DISABLED)
+
+        def on_mem_select(evt):
+            sel = mem_listbox.curselection()
+            if sel:
+                show_memory_detail(sel[0])
+
+        mem_listbox.bind("<<ListboxSelect>>", on_mem_select)
+
+        btn_search = tk.Button(filter_frame, text="Search", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_BORDER_ACTIVE, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=10, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=refresh_memories)
         btn_search.pack(side=tk.RIGHT)
+        var_selected_cat.trace_add("write", lambda *args: refresh_memories())
 
         # Bottom Actions Bar
         actions_bar = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
@@ -3161,22 +3268,42 @@ class SGCubeApp:
 
         def add_fact_prompt():
             import tkinter.simpledialog as sd
-            fact = sd.askstring("Add Personal Memory", "Enter new fact/detail to remember:", parent=dialog)
+            fact = sd.askstring("Add Personal Memory", "Enter new fact/detail to remember (e.g. 'My laptop is on the study table'):", parent=dialog)
             if fact and fact.strip():
-                ok = self.engine.memory.save_memory("personal", "fact", fact.strip())
+                k, f = self.engine.router.extract_memory_key_and_fact(fact.strip())
+                ok = self.engine.memory.save_memory("personal", k, f or fact.strip())
                 if ok:
                     messagebox.showinfo("Memory Saved", f"Saved: '{fact.strip()}'", parent=dialog)
                 else:
                     messagebox.showwarning("Notice", "Could not save memory.", parent=dialog)
                 refresh_memories()
 
-        btn_add = tk.Button(actions_bar, text="+ Add Fact", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=add_fact_prompt)
-        btn_add.pack(side=tk.LEFT, padx=(0, 8))
+        def delete_selected_memory():
+            sel = mem_listbox.curselection()
+            if sel and sel[0] < len(active_memories_data):
+                m = active_memories_data[sel[0]]
+                if messagebox.askyesno("Confirm Delete", f"Delete memory for key '{m['key_phrase']}'?", parent=dialog):
+                    self.engine.memory.forget_memory(m['key_phrase'])
+                    refresh_memories()
 
-        btn_clear = tk.Button(actions_bar, text="Clear All Memories", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=5, cursor="hand2", command=lambda: [messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to delete all stored personal memories?", parent=dialog) and self.engine.memory.clear_all_memories(), refresh_memories()])
+        def clear_all_memories_dialog():
+            if self.engine.security.is_configured() and not self.engine.security.is_session_authorized():
+                messagebox.showwarning("Authorization Required", "Clearing all memories is a protected high-risk action.\nPlease authorize via voice security password or unlock session first.", parent=dialog)
+                return
+            if messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to permanently delete all stored personal memories across all categories?", parent=dialog):
+                self.engine.memory.clear_all_memories()
+                refresh_memories()
+
+        btn_add = tk.Button(actions_bar, text="+ Add Fact", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=10, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=add_fact_prompt)
+        btn_add.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_del_sel = tk.Button(actions_bar, text="Delete Selected", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_ALERT_RED, relief=tk.FLAT, bd=0, padx=10, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=delete_selected_memory)
+        btn_del_sel.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_clear = tk.Button(actions_bar, text="Clear All", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4, cursor="hand2", command=clear_all_memories_dialog)
         btn_clear.pack(side=tk.LEFT)
 
-        btn_close = tk.Button(actions_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=16, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
+        btn_close = tk.Button(actions_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=14, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
         btn_close.pack(side=tk.RIGHT)
 
         refresh_memories()
@@ -3771,6 +3898,270 @@ class SGCubeApp:
 
         prof_grid.columnconfigure(1, weight=1)
 
+        # 🧠 Context-Aware Personal Memory Card (SG CUBE 2.5)
+        mem_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        mem_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        mem_title = tk.Label(mem_card, text="🧠 Personal Context Memory", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        mem_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_mem_status_str():
+            stats = self.engine.memory.get_memory_stats()
+            total = stats.get("total_count", 0)
+            cats = len(stats.get("categories", {}))
+            return f"Status: {total} stored {'memory' if total == 1 else 'memories'} across {cats} {'category' if cats == 1 else 'categories'}"
+
+        lbl_mem_status = tk.Label(mem_card, text=get_mem_status_str(), bg=COLOR_PANEL_SECONDARY, fg=COLOR_STATUS_GREEN if self.engine.memory.get_memory_stats().get("total_count", 0) > 0 else COLOR_TEXT_MUTED, font=("Segoe UI", 9, "bold"))
+        lbl_mem_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        var_context_recall = tk.BooleanVar(value=self.engine.store.get_setting("context_memory_enabled", True))
+        def toggle_context_recall():
+            self.engine.store.set_setting("context_memory_enabled", var_context_recall.get())
+
+        chk_recall = tk.Checkbutton(
+            mem_card,
+            text="Enable Context-Aware Memory & Recall",
+            variable=var_context_recall,
+            bg=COLOR_PANEL_SECONDARY,
+            fg=COLOR_TEXT_PRIMARY,
+            selectcolor=COLOR_PANEL_DEEP,
+            activebackground=COLOR_PANEL_SECONDARY,
+            activeforeground=COLOR_CYAN_PRIMARY,
+            font=("Segoe UI", 9),
+            command=toggle_context_recall
+        )
+        chk_recall.pack(anchor="w", padx=10, pady=(0, 6))
+
+        mem_btn_row = tk.Frame(mem_card, bg=COLOR_PANEL_SECONDARY)
+        mem_btn_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        def open_mem_from_settings():
+            self.open_memory_dialog()
+            stats = self.engine.memory.get_memory_stats()
+            total = stats.get("total_count", 0)
+            cats = len(stats.get("categories", {}))
+            lbl_mem_status.config(
+                text=f"Status: {total} stored {'memory' if total == 1 else 'memories'} across {cats} {'category' if cats == 1 else 'categories'}",
+                fg=COLOR_STATUS_GREEN if total > 0 else COLOR_TEXT_MUTED
+            )
+
+        def clear_mem_from_settings():
+            if self.engine.security.is_configured() and not self.engine.security.is_session_authorized():
+                messagebox.showwarning("Authorization Required", "Clearing all memories is a protected high-risk action.\nPlease authorize via voice security password or unlock session first.", parent=dialog)
+                return
+            if messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to permanently delete all stored personal memories across all categories?", parent=dialog):
+                count = self.engine.memory.clear_all_memories()
+                lbl_mem_status.config(text="Status: 0 stored memories across 0 categories", fg=COLOR_TEXT_MUTED)
+                messagebox.showinfo("Memories Cleared", f"Successfully cleared {count} stored memories.", parent=dialog)
+
+        btn_view_mem = tk.Button(mem_btn_row, text="View / Manage Memories", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=open_mem_from_settings)
+        btn_view_mem.pack(side=tk.LEFT, padx=(0, 4))
+
+        btn_clear_mem = tk.Button(mem_btn_row, text="Clear All", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=8, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=clear_mem_from_settings)
+        btn_clear_mem.pack(side=tk.LEFT, padx=1)
+
+        # 🛡️ Voice Security Password & Authorization Card (SG CUBE 2.5)
+        sec_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        sec_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        sec_title = tk.Label(sec_card, text="🛡️ Voice Security Password & Authorization", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        sec_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_sec_status():
+            is_cfg = self.engine.security.is_configured()
+            is_auth = self.engine.security.is_session_authorized()
+            is_lock, lock_rem = self.engine.security.is_locked_out()
+            if is_lock:
+                return f"Status: Temporarily Locked ({lock_rem}s remaining)", COLOR_ALERT_RED
+            elif is_cfg:
+                status_txt = "Configured (Active Session)" if is_auth else "Configured (Locked)"
+                return f"Status: {status_txt}", (COLOR_STATUS_GREEN if is_auth else COLOR_CYAN_PRIMARY)
+            else:
+                return "Status: Not Configured", COLOR_TEXT_MUTED
+
+        st_txt, st_col = get_sec_status()
+        lbl_sec_status = tk.Label(sec_card, text=st_txt, bg=COLOR_PANEL_SECONDARY, fg=st_col, font=("Segoe UI", 9, "bold"))
+        lbl_sec_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        var_face_2fa = tk.BooleanVar(value=self.engine.security.is_face_2fa_required())
+        def toggle_face_2fa():
+            self.engine.security.set_face_2fa_required(var_face_2fa.get())
+
+        chk_2fa = tk.Checkbutton(
+            sec_card,
+            text="Require Live Face Confirmation for High-Risk Actions (2FA)",
+            variable=var_face_2fa,
+            bg=COLOR_PANEL_SECONDARY,
+            fg=COLOR_TEXT_PRIMARY,
+            selectcolor=COLOR_PANEL_DEEP,
+            activebackground=COLOR_PANEL_SECONDARY,
+            activeforeground=COLOR_CYAN_PRIMARY,
+            font=("Segoe UI", 9),
+            command=toggle_face_2fa
+        )
+        chk_2fa.pack(anchor="w", padx=10, pady=(0, 6))
+
+        sec_btn_row = tk.Frame(sec_card, bg=COLOR_PANEL_SECONDARY)
+        sec_btn_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        def refresh_sec_ui():
+            txt, col = get_sec_status()
+            lbl_sec_status.config(text=txt, fg=col)
+
+        def cmd_set_password():
+            import tkinter.simpledialog as sd
+            p1 = sd.askstring("Set Voice Security Password", "Enter new voice security password phrase (at least 2 words):", parent=dialog, show="•")
+            if not p1 or not p1.strip():
+                return
+            p2 = sd.askstring("Confirm Voice Security Password", "Repeat the voice security password phrase:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The passwords do not match. Please try again.", parent=dialog)
+                return
+            ok, msg, rc = self.engine.security.set_password(p1.strip())
+            if ok:
+                rc_msg = f"\n\nIMPORTANT: Save your one-time Recovery Code:\n\n{rc}\n\nThis code cannot be displayed again." if rc else ""
+                messagebox.showinfo("Success", f"{msg}{rc_msg}", parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_change_password():
+            import tkinter.simpledialog as sd
+            cur = sd.askstring("Change Password", "Enter your CURRENT voice security password:", parent=dialog, show="•")
+            if not cur:
+                return
+            p1 = sd.askstring("New Password", "Enter your NEW voice security password (at least 2 words):", parent=dialog, show="•")
+            if not p1:
+                return
+            p2 = sd.askstring("Confirm New Password", "Repeat your NEW voice security password:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The new passwords do not match.", parent=dialog)
+                return
+            ok, msg = self.engine.security.change_password(cur.strip(), p1.strip())
+            if ok:
+                messagebox.showinfo("Success", msg, parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_reset_password():
+            import tkinter.simpledialog as sd
+            rc = sd.askstring("Reset Password", "Enter your one-time Recovery Code (e.g. RC-XXXX-XXXX):", parent=dialog)
+            if not rc:
+                return
+            p1 = sd.askstring("New Password", "Enter your NEW voice security password (at least 2 words):", parent=dialog, show="•")
+            if not p1:
+                return
+            p2 = sd.askstring("Confirm New Password", "Repeat your NEW voice security password:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The new passwords do not match.", parent=dialog)
+                return
+            ok, msg, new_rc = self.engine.security.reset_with_recovery_code(rc.strip(), p1.strip())
+            if ok:
+                rc_msg = f"\n\nYour NEW one-time Recovery Code is:\n\n{new_rc}\n\nPlease save it in a safe place." if new_rc else ""
+                messagebox.showinfo("Success", f"{msg}{rc_msg}", parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_remove_password():
+            import tkinter.simpledialog as sd
+            cur = sd.askstring("Remove Password", "Enter your CURRENT voice security password to disable protection:", parent=dialog, show="•")
+            if not cur:
+                return
+            if not messagebox.askyesno("Confirm Removal", "Removing your Voice Security Password will disable protection for sensitive features.\n\nAre you sure you want to continue?", parent=dialog):
+                return
+            ok, msg = self.engine.security.remove_password(cur.strip())
+            if ok:
+                messagebox.showinfo("Success", msg, parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_lock_now():
+            self.engine.security.lock_session()
+            messagebox.showinfo("Session Locked", "Active security authorization session has been revoked.", parent=dialog)
+            refresh_sec_ui()
+
+        btn_set_p = tk.Button(sec_btn_row, text="Set Password", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_set_password)
+        btn_set_p.pack(side=tk.LEFT, padx=1)
+
+        btn_chg_p = tk.Button(sec_btn_row, text="Change", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_change_password)
+        btn_chg_p.pack(side=tk.LEFT, padx=1)
+
+        btn_rst_p = tk.Button(sec_btn_row, text="Reset", bg=COLOR_PANEL_DEEP, fg=COLOR_ORANGE, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_reset_password)
+        btn_rst_p.pack(side=tk.LEFT, padx=1)
+
+        btn_rem_p = tk.Button(sec_btn_row, text="Remove", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_remove_password)
+        btn_rem_p.pack(side=tk.LEFT, padx=1)
+
+        btn_lck_p = tk.Button(sec_btn_row, text="Lock Now", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_lock_now)
+        btn_lck_p.pack(side=tk.LEFT, padx=1)
+
+        # 🔔 Proactive Assistive Alerts Card (SG CUBE 2.5 Feature 10)
+        alerts_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        alerts_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        alerts_title = tk.Label(alerts_card, text="🔔 Proactive Assistive Alerts (Feature 10)", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        alerts_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_alert_status_str():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                summary = self.engine.alerts.get_status_summary()
+                mode_name = summary.get("mode", "NORMAL")
+                is_p = summary.get("is_paused", False)
+                rem = summary.get("pause_remaining_seconds", 0)
+                if is_p:
+                    p_str = f"Paused ({int(rem)}s remaining)" if rem > 0 else "Paused"
+                    return f"Status: {p_str} | Mode: {mode_name}", COLOR_WARNING_GOLD
+                return f"Status: Active | Mode: {mode_name} ({summary.get('queued_count', 0)} queued)", COLOR_STATUS_GREEN
+            return "Status: Ready", COLOR_STATUS_GREEN
+
+        a_txt, a_col = get_alert_status_str()
+        lbl_alerts_status = tk.Label(alerts_card, text=a_txt, bg=COLOR_PANEL_SECONDARY, fg=a_col, font=("Segoe UI", 9, "bold"))
+        lbl_alerts_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        mode_frame = tk.Frame(alerts_card, bg=COLOR_PANEL_SECONDARY)
+        mode_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        tk.Label(mode_frame, text="Alert Mode:", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 6))
+
+        current_mode = self.engine.alerts.mode.value if hasattr(self.engine, 'alerts') and self.engine.alerts else "NORMAL"
+        var_alert_mode = tk.StringVar(value=current_mode)
+        opt_modes = ["OFF", "MINIMAL", "NORMAL", "ASSISTIVE"]
+
+        def on_mode_changed(*args):
+            new_m = var_alert_mode.get()
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.set_mode(new_m)
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        var_alert_mode.trace_add("write", on_mode_changed)
+
+        opt_mode_menu = tk.OptionMenu(mode_frame, var_alert_mode, *opt_modes)
+        opt_mode_menu.config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        opt_mode_menu["menu"].config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8))
+        opt_mode_menu.pack(side=tk.LEFT, padx=(0, 8))
+
+        def cmd_pause_alerts_5m():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.pause_alerts(duration_seconds=300.0)
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        def cmd_resume_alerts():
+            if hasattr(self.engine, 'alerts') and self.engine.alerts:
+                self.engine.alerts.resume_alerts()
+                t, c = get_alert_status_str()
+                lbl_alerts_status.config(text=t, fg=c)
+
+        btn_pause_a = tk.Button(mode_frame, text="Pause 5m", bg=COLOR_PANEL_DEEP, fg=COLOR_WARNING_GOLD, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=2, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_pause_alerts_5m)
+        btn_pause_a.pack(side=tk.LEFT, padx=2)
+
+        btn_resume_a = tk.Button(mode_frame, text="Resume", bg=COLOR_PANEL_DEEP, fg=COLOR_STATUS_GREEN, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=2, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_resume_alerts)
+        btn_resume_a.pack(side=tk.LEFT, padx=2)
+
         sc_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
         sc_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
 
@@ -3792,6 +4183,7 @@ class SGCubeApp:
             self.engine.store.set_setting("safety_alerts_enabled", var_safety.get())
             self.engine.store.set_setting("environment_monitor_enabled", var_continuous.get())
             self.engine.store.set_setting("developer_mode", var_dev.get())
+            self.engine.store.set_setting("context_memory_enabled", var_context_recall.get())
 
             self.engine.store.set_setting("user_name", entry_uname.get().strip())
             self.engine.store.set_setting("user_display_name", entry_dname.get().strip())

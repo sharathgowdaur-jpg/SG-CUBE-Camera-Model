@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from .spatial_analyzer import SpatialAnalyzer
 
 class ObjectDetector:
@@ -24,7 +24,6 @@ class ObjectDetector:
 
     def __init__(self, spatial_analyzer: SpatialAnalyzer):
         self.spatial = spatial_analyzer
-        # Load MobileNetSSD COCO model or cascade / heuristic detection if available
         self.net = None
         self._try_load_default_model()
 
@@ -33,18 +32,18 @@ class ObjectDetector:
         pass
 
     def normalize_target_query(self, query: str) -> str:
-        q = query.lower()
+        q = query.lower().strip()
         for cat, synonyms in self.COMMON_OBJECT_KEYWORDS.items():
             for syn in synonyms:
                 if syn in q:
                     return cat
-        return q.strip()
+        return q
 
-    def detect_objects_heuristic(self, frame: np.ndarray) -> List[Dict]:
+    def detect_objects_heuristic(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """
         Extracts salient object regions and bounding boxes from frame.
         """
-        if frame is None or frame.size == 0:
+        if frame is None or getattr(frame, "size", 0) == 0:
             return []
 
         h_img, w_img = frame.shape[:2]
@@ -59,32 +58,36 @@ class ObjectDetector:
         max_area = (w_img * h_img) * 0.85
 
         detected = []
-        for cnt in contours:
+        for idx, cnt in enumerate(contours):
             x, y, w, h = cv2.boundingRect(cnt)
             area = w * h
             if min_area < area < max_area:
                 spatial_info = self.spatial.get_spatial_zone((x, y, w, h))
                 detected.append({
-                    "bbox": (x, y, w, h),
+                    "object_id": f"obj_det_{idx+1}",
+                    "class_name": "object",
+                    "name": "object",
+                    "confidence": 0.75,
+                    "bbox": (int(x), int(y), int(w), int(h)),
                     "area": area,
                     "spatial": spatial_info
                 })
 
         return detected
 
-    def find_target_object(self, target_query: str, frame: np.ndarray, vision_context: Optional[Dict] = None) -> Dict:
+    def find_target_object(self, target_query: str, frame: np.ndarray, vision_context: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Searches frame for a specific object requested by the user.
         Returns dict with: 'found', 'object_name', 'spatial_desc', 'confidence', 'response_text'
         """
         norm_target = self.normalize_target_query(target_query)
-        if frame is None:
+        if frame is None or getattr(frame, "size", 0) == 0:
             return {
                 "found": False,
                 "object_name": norm_target,
                 "spatial_desc": None,
                 "confidence": "low",
-                "response_text": f"I don't currently see a {norm_target}."
+                "response_text": f"I don't currently see your {norm_target}."
             }
 
         # Check vision_context if Gemini or local model provided detection
@@ -93,13 +96,14 @@ class ObjectDetector:
                 obj_name = obj.get("name", "").lower()
                 if norm_target in obj_name or obj_name in norm_target:
                     spatial = obj.get("spatial", {})
+                    h_verbal = spatial.get("h_verbal", "in front of you")
                     loc_desc = spatial.get("full_verbal", "in front of you")
                     return {
                         "found": True,
                         "object_name": norm_target,
-                        "spatial_desc": loc_desc,
+                        "spatial_desc": h_verbal,
                         "confidence": "high",
-                        "response_text": f"I see your {norm_target} {loc_desc}."
+                        "response_text": f"Your {norm_target} is {h_verbal}."
                     }
 
         # Heuristic search fallback
@@ -108,13 +112,13 @@ class ObjectDetector:
             # Pick largest salient object
             objects.sort(key=lambda o: o["area"], reverse=True)
             spatial_info = objects[0]["spatial"]
-            loc_desc = spatial_info["full_verbal"]
+            h_verbal = spatial_info.get("h_verbal", "in front of you")
             return {
                 "found": True,
                 "object_name": norm_target,
-                "spatial_desc": loc_desc,
+                "spatial_desc": h_verbal,
                 "confidence": "medium",
-                "response_text": f"There appears to be an object matching your {norm_target} {loc_desc}."
+                "response_text": f"Your {norm_target} is {h_verbal}."
             }
 
         return {
@@ -122,5 +126,5 @@ class ObjectDetector:
             "object_name": norm_target,
             "spatial_desc": None,
             "confidence": "low",
-            "response_text": f"I don't currently see your {norm_target} in the camera view."
+            "response_text": f"I don't currently see your {norm_target}."
         }
