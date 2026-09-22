@@ -335,11 +335,12 @@ class VisionEngine:
 
         elif intent == "MEMORY_RECALL":
             query = route["params"].get("query", user_transcript)
-            recalled = self.memory.recall_memory(query)
+            category = route["params"].get("category")
+            recalled = self.memory.recall_memory(query, category=category)
             if recalled:
                 resp = f"I remember that {recalled[0].lower() + recalled[1:]}" if not recalled.lower().startswith("i ") and not recalled.lower().startswith("my ") else f"{recalled}"
             else:
-                resp = "I don't have a specific memory saved for that yet."
+                resp = "I don't have a specific memory saved for that."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
@@ -354,8 +355,19 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        elif intent == "MEMORY_DELETE_CATEGORY":
+            category = route["params"].get("category", "")
+            count = self.memory.delete_category(category)
+            if count > 0:
+                resp = f"Got it. I have deleted {count} memories from the {category} category."
+            else:
+                resp = f"No saved memories found in the {category} category."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "MEMORY_LIST":
-            memories = self.memory.list_all_memories()
+            category = route["params"].get("category")
+            memories = self.memory.list_all_memories(category=category)
             if memories:
                 facts = [m["fact_value"] for m in memories[:8]]
                 resp = f"I remember {len(memories)} things about you: " + "; ".join(facts) + "."

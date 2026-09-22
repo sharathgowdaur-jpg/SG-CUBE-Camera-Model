@@ -14,19 +14,17 @@ See. Understand. Remember. Assist. That’s SG CUBE."""
 class CommandRouter:
     """
     Intelligent Intent Parser & Command Router for Voice Queries.
-    Maps natural language spoken commands to specialized perception & memory routines.
+    Maps natural language spoken commands to specialized perception, memory, and security routines.
     """
 
     def extract_memory_key_and_fact(self, text: str) -> Tuple[str, str]:
         """
         Intelligently extracts search key phrase and clean fact text.
         Examples:
-        'Remember that my favorite color is blue' -> key: 'favorite color', fact: 'My favorite color is blue.'
-        'Remember my favorite fruit is apple.' -> key: 'favorite fruit', fact: 'My favorite fruit is apple.'
-        'Save this information' -> key: 'contextual', fact: ''
-        'Save this info' -> key: 'contextual', fact: ''
-        'Save this' -> key: 'contextual', fact: ''
-        'Remember this' -> key: 'contextual', fact: ''
+        'Remember that my laptop is on the study table' -> key: 'laptop location', fact: 'My laptop is on the study table.'
+        'Remember my favorite color is blue' -> key: 'favorite color', fact: 'My favorite color is blue.'
+        'Remember that my project is called SG CUBE' -> key: 'project name', fact: 'My project is called SG CUBE.'
+        'My laptop is now in my bedroom' -> key: 'laptop location', fact: 'My laptop is now in my bedroom.'
         'Save this: meeting at 3pm' -> key: 'meeting', fact: 'Meeting at 3pm.'
         """
         clean = text.strip()
@@ -44,6 +42,30 @@ class CommandRouter:
         # Strip any leading 'this:' or 'that:' or 'info:' if present
         body_clean_val = re.sub(r'^(?:this|that|info|information)\s*:\s*', '', body, flags=re.IGNORECASE).strip()
         body_lower = body_clean_val.lower()
+
+        # Location patterns: "... is (now)? (in|on|at|inside|under|near|kept in|placed on) ..."
+        loc_match = re.search(r'(.+?)\s+(?:is|are)(?:\s+now)?\s+(?:in|on|at|inside|under|behind|near|next to|kept in|stored in|placed on)\s+(.+)', body_clean_val, re.IGNORECASE)
+        if loc_match:
+            subj = loc_match.group(1).strip()
+            key_entity = re.sub(r'^(?:my|the|a|an)\s+', '', subj, flags=re.IGNORECASE).strip()
+            key_clean = re.sub(r'[^\w\s]', '', key_entity).strip().lower()
+            key = f"{key_clean} location" if key_clean else "location"
+            val = body_clean_val[0].upper() + body_clean_val[1:]
+            if not val.endswith('.'):
+                val += '.'
+            return key, val
+
+        # Project / naming patterns: "... is (called|named) ..."
+        named_match = re.search(r'(.+?)\s+(?:is|are)\s+(?:called|named)\s+(.+)', body_clean_val, re.IGNORECASE)
+        if named_match:
+            subj = named_match.group(1).strip()
+            key_entity = re.sub(r'^(?:my|the|a|an)\s+', '', subj, flags=re.IGNORECASE).strip()
+            key_clean = re.sub(r'[^\w\s]', '', key_entity).strip().lower()
+            key = f"{key_clean} name" if key_clean else "project name"
+            val = body_clean_val[0].upper() + body_clean_val[1:]
+            if not val.endswith('.'):
+                val += '.'
+            return key, val
 
         # Subject-verb pattern: "... is ..." or "... are ..."
         if " is " in body_lower or " are " in body_lower:
@@ -78,7 +100,7 @@ class CommandRouter:
 
         clean_text = text.strip().lower()
 
-        # 1. Face Memory Enrollment ("Remember my face as Sharath", "Remember this person as Rahul", "Save my face as Rahul", "Save this face as Sahana", "Save this face", "Enroll face as Alex")
+        # 1. Face Memory Enrollment ("Remember my face as Sharath", "Save this face as Sahana", "Enroll face as Alex")
         if any(w in clean_text for w in ["person", "face", "this person", "this face", "my face", "face as", "save face", "remember face", "enroll face"]):
             if any(p in clean_text for p in ["remember", "save", "enroll", "store"]):
                 remember_face_match = re.search(
@@ -91,22 +113,38 @@ class CommandRouter:
                     if name_str and name_str.lower() not in ["that", "this", "me", "my", "it", "face", "person", ""]:
                         return {"intent": "FACE_REMEMBER", "target": name_str, "params": {"name": name_str}}
                     else:
-                        # Bare face enrollment request (e.g. "Save this face", "Remember this face", "Remember my face")
                         return {"intent": "FACE_REMEMBER", "target": None, "params": {"name": None}}
 
-        # Face Re-Enrollment / Update Confirmation ("Yes, update", "Update face profile", "Yes update", "Update profile")
+        # Face Re-Enrollment / Update Confirmation ("Yes, update", "Update face profile")
         if any(p in clean_text for p in ["update face", "update profile", "update the face", "update the profile", "update face profile", "yes update", "yes, update"]):
             return {"intent": "FACE_UPDATE_CONFIRM", "target": None, "params": {}}
 
-        # 2. Clear All Persistent Memories ("Clear all memories", "Forget everything you know about me")
-        if any(p in clean_text for p in ["forget everything", "clear all memories", "clear my memories", "erase all memories"]):
+        # 2. Clear All Persistent Memories ("Clear all memories", "Clear all my memories", "Forget everything")
+        if re.search(r'\b(?:clear|erase|wipe|delete|forget)\s+(?:all\s+)?(?:my\s+)?(?:stored\s+)?(?:all\s+)?memories\b', clean_text) or any(p in clean_text for p in ["forget everything", "erase everything", "wipe everything", "clear everything"]):
             return {"intent": "MEMORY_CLEAR", "target": None, "params": {}}
 
-        # 3. List / Show Memories ("Show my memories", "List all memories", "What memories do you have")
-        if any(p in clean_text for p in ["show my memories", "list all memories", "what do you remember about me", "show stored memories", "list memories"]):
+        # Clear Category Memories ("Clear all location memories", "Clear preference memories", "Delete my task memories")
+        cat_del_match = re.search(r'(?:clear|delete|erase)\s+(?:all\s+)?(?:my\s+)?(personal|preference|location|object|task|routine|contact|project|device)\s+memories', clean_text)
+        if cat_del_match:
+            cat_target = cat_del_match.group(1).strip().lower()
+            return {"intent": "MEMORY_DELETE_CATEGORY", "target": cat_target, "params": {"category": cat_target}}
+
+        # 3. List / Show Memories ("Show my memories", "List all memories", "What do you remember about me?")
+        if any(p in clean_text for p in [
+            "show my memories", "list all memories", "what do you remember about me",
+            "what do you know about me", "show stored memories", "list memories",
+            "what memories do you have", "what do you remember", "tell me what you remember"
+        ]):
             return {"intent": "MEMORY_LIST", "target": None, "params": {}}
 
-        # 4. Explicit & Contextual Memory Save ("Save this", "Save this information", "Remember this", "Remember my favorite color is blue")
+        # 4. Explicit Location Recall ("Where did I say my laptop is?", "Where is my laptop?", "Where did I put my keys?")
+        where_match = re.search(r'where\s+(?:did\s+i\s+say\s+|did\s+i\s+put\s+|did\s+i\s+keep\s+|is\s+|are\s+)(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
+        if where_match and not any(w in clean_text for w in ["who", "read", "money", "person", "face", "around me", "in front of me"]):
+            entity_str = where_match.group(1).strip().rstrip("? .!")
+            entity_clean = re.sub(r'\s+(?:is|are|located|kept|stored)$', '', entity_str).strip()
+            return {"intent": "MEMORY_RECALL", "target": f"{entity_clean} location", "params": {"query": f"{entity_clean} location", "entity": entity_clean, "category": "location"}}
+
+        # 5. Explicit & Contextual Memory Save ("Remember that my laptop is on the study table", "Remember my favorite color is blue", "Save this")
         is_save_cmd = (
             clean_text.startswith("remember") or
             clean_text.startswith("please remember") or
@@ -117,15 +155,16 @@ class CommandRouter:
             "save that" in clean_text or
             "save info" in clean_text or
             "save information" in clean_text or
-            clean_text.startswith("my name is")
+            clean_text.startswith("my name is") or
+            (clean_text.startswith("my ") and (" is now in " in clean_text or " is in " in clean_text or " is on " in clean_text))
         )
         if is_save_cmd:
-            # Exclude recall question forms ("What do you remember", "Do you remember", "Who is")
+            # Exclude recall question forms ("What do you remember", "Do you remember", "Who is", "Where did")
             if not any(w in clean_text for w in ["do you", "can you", "what", "who", "where", "how", "person", "face"]):
                 key, fact_val = self.extract_memory_key_and_fact(text)
                 return {"intent": "MEMORY_SAVE", "target": key, "params": {"fact": fact_val, "key": key}}
 
-        # 5. Forget Specific Memory or Face ("Forget face of John", "Forget my favorite color")
+        # 6. Forget Specific Memory or Face ("Forget face of John", "Forget my favorite color", "Forget my laptop location")
         forget_match = re.search(r'forget (?:that|my|the|face of|person)?\s*(.+)', clean_text)
         if forget_match:
             target_str = forget_match.group(1).strip()
@@ -138,7 +177,7 @@ class CommandRouter:
                 key = re.sub(r'^(?:that|my|the|a|an)\s+', '', target_str, flags=re.IGNORECASE).strip().lower()
                 return {"intent": "MEMORY_FORGET", "target": key, "params": {"key": key}}
 
-        # 6. Self-Introduction Query ("Introduce yourself", "Who are you?", "Tell me about yourself", "Give your introduction", "What is SG CUBE?")
+        # 7. Self-Introduction Query ("Introduce yourself", "Who are you?", "What is SG CUBE?")
         if any(p in clean_text for p in [
             "introduce yourself", "introduce you", "tell me about yourself", "who are you",
             "give your introduction", "give an introduction", "give me your introduction",
@@ -147,7 +186,7 @@ class CommandRouter:
         ]) or clean_text in ["introduce", "introduction", "who are you", "who is sg cube", "what is sg cube"]:
             return {"intent": "INTRODUCE", "target": None, "params": {}}
 
-        # 7. Face Recognition Query ("Who is in front of me?", "Who is this?", "Who am I?", "Do you recognize me?")
+        # 8. Face Recognition Query ("Who is in front of me?", "Who is this?", "Who am I?")
         if any(p in clean_text for p in [
             "who is in front of me", "who is this", "who is that", "who am i",
             "do you know this person", "who just entered", "do you recognize",
@@ -155,42 +194,47 @@ class CommandRouter:
         ]):
             return {"intent": "FACE_IDENTIFY", "target": None, "params": {}}
 
-        # 8. Face Listing ("Who do you know?", "List people", "Show enrolled faces")
+        # 9. Face Listing ("Who do you know?", "List people", "Show enrolled faces")
         if any(p in clean_text for p in [
             "who do you know", "list people", "who do you remember", "list all faces",
             "show how many people", "saved in face memory", "saved faces", "enrolled faces"
         ]):
             return {"intent": "FACE_LIST", "target": None, "params": {}}
 
-        # 9. Memory Recall Query ("What is my favorite color?", "What's my name?", "Do you remember...")
-        if any(p in clean_text for p in ["do you remember", "what is my", "what's my", "do you know my", "who is", "what do you know about", "what do you remember", "tell me what you remember", "do you know"]):
+        # 10. Memory Recall Query ("What is my favorite color?", "What is my project called?", "Do you remember...")
+        if any(p in clean_text for p in [
+            "do you remember", "what is my", "what's my", "do you know my", "who is",
+            "what do you know about", "what do you remember", "tell me what you remember",
+            "do you know", "what did i say", "what is the name of my", "what is my project called",
+            "what is my project name", "what is my favorite", "what's my favorite"
+        ]):
             # Exclude standard visual queries
             if not any(w in clean_text for w in ["in front of me", "around me", "this person", "this face", "this"]):
                 return {"intent": "MEMORY_RECALL", "target": clean_text, "params": {"query": clean_text}}
 
-        # 9. Currency Query
+        # 11. Currency Query
         if any(p in clean_text for p in ["how much money", "what currency", "how much is this", "what denomination", "rupee note", "banknote"]):
             return {"intent": "CURRENCY", "target": None, "params": {}}
 
-        # 10. OCR / Text Reading Query
+        # 12. OCR / Text Reading Query
         if any(p in clean_text for p in ["read this", "read the sign", "read text", "read document", "read label", "what does this say"]):
             return {"intent": "OCR", "target": None, "params": {}}
 
-        # 11. Environment Query
+        # 13. Environment Query
         if any(p in clean_text for p in ["what is around me", "describe the environment", "describe my surroundings", "what is in front of me"]):
             return {"intent": "ENVIRONMENT", "target": None, "params": {}}
 
-        # 12. Object Search Query ("Find my phone", "Where is my bottle?")
-        find_match = re.search(r'(?:find|where is|can you see|is there a|look for)\s*(?:my|a|the)?\s*([a-zA-Z0-9_\s]+)', clean_text)
+        # 14. Object Search Query ("Find my phone", "Look for bottle")
+        find_match = re.search(r'(?:find|can you see|is there a|look for)\s*(?:my|a|the)?\s*([a-zA-Z0-9_\s]+)', clean_text)
         if find_match and not any(w in clean_text for w in ["who", "read", "money"]):
             obj_name = find_match.group(1).strip()
             return {"intent": "OBJECT_SEARCH", "target": obj_name, "params": {"object_name": obj_name}}
 
-        # 13. Safety / Hazard Query
+        # 15. Safety / Hazard Query
         if any(p in clean_text for p in ["are there stairs", "is it safe", "any obstacles", "anything dangerous"]):
             return {"intent": "SAFETY", "target": None, "params": {}}
 
-        # 14. Settings Toggles
+        # 16. Settings Toggles
         if "turn greetings off" in clean_text or "stop greetings" in clean_text:
             return {"intent": "SETTINGS", "target": "greetings", "params": {"setting": "greeting_enabled", "value": False}}
 
@@ -203,23 +247,23 @@ class CommandRouter:
         if "turn environment monitoring off" in clean_text or "continuous monitoring off" in clean_text:
             return {"intent": "SETTINGS", "target": "continuous", "params": {"setting": "environment_monitor_enabled", "value": False}}
 
-        # 15. Color Identification Query ("What color is this shirt?", "Tell me the colors in front of me")
+        # 17. Color Identification Query
         if any(p in clean_text for p in ["what color", "tell me the color", "identify color", "color of this"]):
             return {"intent": "COLOR_IDENTIFY", "target": None, "params": {}}
 
-        # 16. Light Level / Room Illumination Check ("Are the lights on?", "Is it dark in here?")
+        # 18. Light Level Check
         if any(p in clean_text for p in ["are the lights on", "is it dark", "check light level", "how is the light", "is the room lit"]):
             return {"intent": "LIGHT_LEVEL_CHECK", "target": None, "params": {}}
 
-        # 17. Product / Barcode / Expiration Date Scan ("Scan this product", "Read expiration date", "Scan barcode")
+        # 19. Product Scan
         if any(p in clean_text for p in ["scan product", "scan barcode", "scan qr", "read expiration", "expiry date", "what medicine", "is this medicine"]):
             return {"intent": "PRODUCT_SCAN", "target": None, "params": {}}
 
-        # 18. Sleep / Deactivate Command
+        # 20. Sleep / Deactivate Command
         if any(p in clean_text for p in ["go to sleep", "stop listening", "sleep mode", "deactivate"]):
             return {"intent": "SLEEP", "target": None, "params": {}}
 
-        # 19. Voice Security Commands (SG CUBE 2.5)
+        # 21. Voice Security Commands (SG CUBE 2.5)
         if any(p in clean_text for p in ["lock security", "lock session", "revoke security", "lock voice security", "lock my session"]):
             return {"intent": "SECURITY_LOCK", "target": None, "params": {}}
 
@@ -241,3 +285,5 @@ class CommandRouter:
 
         # Fallback to General Gemini Live Reasoning
         return {"intent": "GENERAL", "target": None, "params": {}}
+
+    route_command = route_intent

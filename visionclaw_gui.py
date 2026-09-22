@@ -3113,10 +3113,10 @@ class SGCubeApp:
         load_sessions()
 
     def open_memory_dialog(self):
-        """ Persistent Memory Management Modal Dialog """
+        """ Structured Context Memory Management Modal Dialog """
         dialog = tk.Toplevel(self.root)
-        dialog.title("SG CUBE — Persistent Memory Database")
-        dialog.geometry("560x580")
+        dialog.title("SG CUBE — Personal Memory Database")
+        dialog.geometry("620x640")
         dialog.configure(bg=COLOR_BG_PRIMARY)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -3124,40 +3124,99 @@ class SGCubeApp:
 
         dialog.bind("<Escape>", lambda e: animate_dialog_close(dialog))
 
-        title_lbl = tk.Label(dialog, text="✦ Stored Long-Term Memories", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 13, "bold"))
-        title_lbl.pack(anchor="w", padx=20, pady=(15, 10))
+        # Title Bar
+        title_lbl = tk.Label(dialog, text="🧠 Stored Personal Context & Memories", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 13, "bold"))
+        title_lbl.pack(anchor="w", padx=20, pady=(15, 8))
 
-        # Search Bar
-        search_frame = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
-        search_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        # Filter & Search Bar
+        filter_frame = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
+        filter_frame.pack(fill=tk.X, padx=20, pady=(0, 8))
 
-        search_entry = tk.Entry(search_frame, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
-        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0, 8))
+        tk.Label(filter_frame, text="Category:", bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 4))
+        
+        categories_list = ["ALL", "PERSONAL", "PREFERENCE", "LOCATION", "OBJECT", "TASK", "ROUTINE", "CONTACT", "PROJECT", "DEVICE", "OTHER"]
+        var_selected_cat = tk.StringVar(value="ALL")
+        opt_cat = tk.OptionMenu(filter_frame, var_selected_cat, *categories_list)
+        opt_cat.config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        opt_cat["menu"].config(bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8))
+        opt_cat.pack(side=tk.LEFT, padx=(0, 8))
 
-        mem_card = tk.Frame(dialog, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
-        mem_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+        search_entry = tk.Entry(filter_frame, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 6))
 
-        mem_box = scrolledtext.ScrolledText(mem_card, wrap=tk.WORD, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10), relief=tk.FLAT, bd=0, height=14)
-        mem_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        # Main Split Frame: Left Listbox of keys/facts, Right Detailed Inspector Box
+        main_split = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
+        main_split.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+
+        # Left Listbox
+        list_card = tk.Frame(main_split, bg=COLOR_PANEL_SECONDARY, width=280, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        list_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+
+        tk.Label(list_card, text="MEMORY ENTRIES", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=10, pady=(6, 4))
+        mem_listbox = tk.Listbox(list_card, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, selectbackground=COLOR_BORDER_ACTIVE, selectforeground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0, highlightthickness=0)
+        mem_listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        # Right Detail Box
+        detail_card = tk.Frame(main_split, bg=COLOR_PANEL_SECONDARY, width=300, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        detail_card.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        tk.Label(detail_card, text="MEMORY DETAILS", bg=COLOR_PANEL_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=10, pady=(6, 4))
+        detail_box = scrolledtext.ScrolledText(detail_card, wrap=tk.WORD, bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0)
+        detail_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        active_memories_data: List[Dict[str, Any]] = []
 
         def refresh_memories():
-            mem_box.configure(state=tk.NORMAL)
-            mem_box.delete("1.0", tk.END)
+            nonlocal active_memories_data
+            mem_listbox.delete(0, tk.END)
             kw = search_entry.get().strip()
+            cat = var_selected_cat.get()
+            selected_cat = None if cat == "ALL" else cat.lower()
+
             if kw:
-                mems = self.engine.memory.search_memories(kw)
+                mems = self.engine.memory.search_memories(kw, category=selected_cat)
             else:
-                mems = self.engine.memory.list_all_memories()
+                mems = self.engine.memory.list_all_memories(category=selected_cat)
 
+            active_memories_data = mems
             if mems:
-                for idx, m in enumerate(mems, 1):
-                    mem_box.insert(tk.END, f"{idx}. [{m['category'].upper()}] {m['fact_value']}\n   (Key: '{m['key_phrase']}')\n\n")
+                for m in mems:
+                    cat_tag = m['category'].upper()
+                    mem_listbox.insert(tk.END, f"[{cat_tag}] {m['key_phrase']}")
+                mem_listbox.select_set(0)
+                show_memory_detail(0)
             else:
-                mem_box.insert(tk.END, "No matching stored memories found.\nClick 'Add Fact' or say 'Remember that...' to save facts.\n")
-            mem_box.configure(state=tk.DISABLED)
+                detail_box.configure(state=tk.NORMAL)
+                detail_box.delete("1.0", tk.END)
+                detail_box.insert(tk.END, "No stored memories found.\nClick '+ Add Fact' or say 'Remember that...' to store personal facts.\n")
+                detail_box.configure(state=tk.DISABLED)
 
-        btn_search = tk.Button(search_frame, text="Search", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_BORDER_ACTIVE, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=12, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=refresh_memories)
+        def show_memory_detail(idx):
+            if idx < 0 or idx >= len(active_memories_data):
+                return
+            m = active_memories_data[idx]
+            detail_box.configure(state=tk.NORMAL)
+            detail_box.delete("1.0", tk.END)
+            created_str = time.strftime('%Y-%m-%d %I:%M %p', time.localtime(m.get('created_at', time.time())))
+            updated_str = time.strftime('%Y-%m-%d %I:%M %p', time.localtime(m.get('updated_at', time.time())))
+            detail_box.insert(tk.END, f"Category:  {m['category'].upper()}\n")
+            detail_box.insert(tk.END, f"Key:       {m['key_phrase']}\n")
+            detail_box.insert(tk.END, f"Source:    {m.get('source', 'voice_explicit')}\n")
+            detail_box.insert(tk.END, f"Created:   {created_str}\n")
+            detail_box.insert(tk.END, f"Updated:   {updated_str}\n\n")
+            detail_box.insert(tk.END, f"Fact Content:\n{m['fact_value']}\n")
+            detail_box.configure(state=tk.DISABLED)
+
+        def on_mem_select(evt):
+            sel = mem_listbox.curselection()
+            if sel:
+                show_memory_detail(sel[0])
+
+        mem_listbox.bind("<<ListboxSelect>>", on_mem_select)
+
+        btn_search = tk.Button(filter_frame, text="Search", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_BORDER_ACTIVE, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=10, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=refresh_memories)
         btn_search.pack(side=tk.RIGHT)
+        var_selected_cat.trace_add("write", lambda *args: refresh_memories())
 
         # Bottom Actions Bar
         actions_bar = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
@@ -3165,22 +3224,42 @@ class SGCubeApp:
 
         def add_fact_prompt():
             import tkinter.simpledialog as sd
-            fact = sd.askstring("Add Personal Memory", "Enter new fact/detail to remember:", parent=dialog)
+            fact = sd.askstring("Add Personal Memory", "Enter new fact/detail to remember (e.g. 'My laptop is on the study table'):", parent=dialog)
             if fact and fact.strip():
-                ok = self.engine.memory.save_memory("personal", "fact", fact.strip())
+                k, f = self.engine.router.extract_memory_key_and_fact(fact.strip())
+                ok = self.engine.memory.save_memory("personal", k, f or fact.strip())
                 if ok:
                     messagebox.showinfo("Memory Saved", f"Saved: '{fact.strip()}'", parent=dialog)
                 else:
                     messagebox.showwarning("Notice", "Could not save memory.", parent=dialog)
                 refresh_memories()
 
-        btn_add = tk.Button(actions_bar, text="+ Add Fact", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=12, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=add_fact_prompt)
-        btn_add.pack(side=tk.LEFT, padx=(0, 8))
+        def delete_selected_memory():
+            sel = mem_listbox.curselection()
+            if sel and sel[0] < len(active_memories_data):
+                m = active_memories_data[sel[0]]
+                if messagebox.askyesno("Confirm Delete", f"Delete memory for key '{m['key_phrase']}'?", parent=dialog):
+                    self.engine.memory.forget_memory(m['key_phrase'])
+                    refresh_memories()
 
-        btn_clear = tk.Button(actions_bar, text="Clear All Memories", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=5, cursor="hand2", command=lambda: [messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to delete all stored personal memories?", parent=dialog) and self.engine.memory.clear_all_memories(), refresh_memories()])
+        def clear_all_memories_dialog():
+            if self.engine.security.is_configured() and not self.engine.security.is_session_authorized():
+                messagebox.showwarning("Authorization Required", "Clearing all memories is a protected high-risk action.\nPlease authorize via voice security password or unlock session first.", parent=dialog)
+                return
+            if messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to permanently delete all stored personal memories across all categories?", parent=dialog):
+                self.engine.memory.clear_all_memories()
+                refresh_memories()
+
+        btn_add = tk.Button(actions_bar, text="+ Add Fact", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_TEXT_PRIMARY, relief=tk.FLAT, bd=0, padx=10, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=add_fact_prompt)
+        btn_add.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_del_sel = tk.Button(actions_bar, text="Delete Selected", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_ALERT_RED, relief=tk.FLAT, bd=0, padx=10, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=delete_selected_memory)
+        btn_del_sel.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_clear = tk.Button(actions_bar, text="Clear All", bg=COLOR_ALERT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4, cursor="hand2", command=clear_all_memories_dialog)
         btn_clear.pack(side=tk.LEFT)
 
-        btn_close = tk.Button(actions_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=16, pady=5, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
+        btn_close = tk.Button(actions_bar, text="Close", font=("Segoe UI", 9, "bold"), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=14, pady=4, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
         btn_close.pack(side=tk.RIGHT)
 
         refresh_memories()
@@ -3775,6 +3854,68 @@ class SGCubeApp:
 
         prof_grid.columnconfigure(1, weight=1)
 
+        # 🧠 Context-Aware Personal Memory Card (SG CUBE 2.5)
+        mem_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        mem_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        mem_title = tk.Label(mem_card, text="🧠 Personal Context Memory", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        mem_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_mem_status_str():
+            stats = self.engine.memory.get_memory_stats()
+            total = stats.get("total_count", 0)
+            cats = len(stats.get("categories", {}))
+            return f"Status: {total} stored {'memory' if total == 1 else 'memories'} across {cats} {'category' if cats == 1 else 'categories'}"
+
+        lbl_mem_status = tk.Label(mem_card, text=get_mem_status_str(), bg=COLOR_PANEL_SECONDARY, fg=COLOR_STATUS_GREEN if self.engine.memory.get_memory_stats().get("total_count", 0) > 0 else COLOR_TEXT_MUTED, font=("Segoe UI", 9, "bold"))
+        lbl_mem_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        var_context_recall = tk.BooleanVar(value=self.engine.store.get_setting("context_memory_enabled", True))
+        def toggle_context_recall():
+            self.engine.store.set_setting("context_memory_enabled", var_context_recall.get())
+
+        chk_recall = tk.Checkbutton(
+            mem_card,
+            text="Enable Context-Aware Memory & Recall",
+            variable=var_context_recall,
+            bg=COLOR_PANEL_SECONDARY,
+            fg=COLOR_TEXT_PRIMARY,
+            selectcolor=COLOR_PANEL_DEEP,
+            activebackground=COLOR_PANEL_SECONDARY,
+            activeforeground=COLOR_CYAN_PRIMARY,
+            font=("Segoe UI", 9),
+            command=toggle_context_recall
+        )
+        chk_recall.pack(anchor="w", padx=10, pady=(0, 6))
+
+        mem_btn_row = tk.Frame(mem_card, bg=COLOR_PANEL_SECONDARY)
+        mem_btn_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        def open_mem_from_settings():
+            self.open_memory_dialog()
+            stats = self.engine.memory.get_memory_stats()
+            total = stats.get("total_count", 0)
+            cats = len(stats.get("categories", {}))
+            lbl_mem_status.config(
+                text=f"Status: {total} stored {'memory' if total == 1 else 'memories'} across {cats} {'category' if cats == 1 else 'categories'}",
+                fg=COLOR_STATUS_GREEN if total > 0 else COLOR_TEXT_MUTED
+            )
+
+        def clear_mem_from_settings():
+            if self.engine.security.is_configured() and not self.engine.security.is_session_authorized():
+                messagebox.showwarning("Authorization Required", "Clearing all memories is a protected high-risk action.\nPlease authorize via voice security password or unlock session first.", parent=dialog)
+                return
+            if messagebox.askyesno("Confirm Clear Memories", "Are you sure you want to permanently delete all stored personal memories across all categories?", parent=dialog):
+                count = self.engine.memory.clear_all_memories()
+                lbl_mem_status.config(text="Status: 0 stored memories across 0 categories", fg=COLOR_TEXT_MUTED)
+                messagebox.showinfo("Memories Cleared", f"Successfully cleared {count} stored memories.", parent=dialog)
+
+        btn_view_mem = tk.Button(mem_btn_row, text="View / Manage Memories", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=open_mem_from_settings)
+        btn_view_mem.pack(side=tk.LEFT, padx=(0, 4))
+
+        btn_clear_mem = tk.Button(mem_btn_row, text="Clear All", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=8, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=clear_mem_from_settings)
+        btn_clear_mem.pack(side=tk.LEFT, padx=1)
+
         # 🛡️ Voice Security Password & Authorization Card (SG CUBE 2.5)
         sec_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
         sec_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
@@ -3934,6 +4075,7 @@ class SGCubeApp:
             self.engine.store.set_setting("safety_alerts_enabled", var_safety.get())
             self.engine.store.set_setting("environment_monitor_enabled", var_continuous.get())
             self.engine.store.set_setting("developer_mode", var_dev.get())
+            self.engine.store.set_setting("context_memory_enabled", var_context_recall.get())
 
             self.engine.store.set_setting("user_name", entry_uname.get().strip())
             self.engine.store.set_setting("user_display_name", entry_dname.get().strip())

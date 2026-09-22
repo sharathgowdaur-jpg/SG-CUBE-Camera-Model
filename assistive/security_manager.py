@@ -88,6 +88,7 @@ class SecurityManager:
         "MEMORY_LIST": SecurityLevel.PROTECTED,
         "MEMORY_SAVE": SecurityLevel.SAFE,  # Saving facts is safe; recalling/listing is protected
         "MEMORY_FORGET": SecurityLevel.PROTECTED,
+        "MEMORY_DELETE_CATEGORY": SecurityLevel.PROTECTED,
         "FACE_LIST": SecurityLevel.PROTECTED,
         "FACE_FORGET": SecurityLevel.PROTECTED,
         "FACE_REMEMBER": SecurityLevel.SAFE,
