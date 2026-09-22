@@ -23,6 +23,7 @@ from .api_key_manager import APIKeyManager
 from .color_detector import ColorDetector
 from .product_scanner import ProductScanner
 from .meta_glass import MetaGlassBridge
+from .security_manager import SecurityManager, SecurityLevel, SecurityState
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
@@ -76,6 +77,7 @@ class VisionEngine:
 
         self.router = CommandRouter()
         self.response_manager = ResponseManager(announcement_cooldown=ann_cooldown)
+        self.security = SecurityManager(pref_dir=self.store.pref_dir, store=self.store)
 
         # Per-frame perception state
         self.current_frame: Optional[np.ndarray] = None
@@ -188,9 +190,97 @@ class VisionEngine:
         Routes user speech transcript to local perception & memory intent handlers.
         Returns immediate spoken response text if handled locally, or None to delegate to Gemini Live.
         """
+        # 1. Interactive Multi-Turn Security Check (Set / Change / Challenge / Remove)
+        if self.security.current_state != SecurityState.IDLE:
+            sec_res = self.security.handle_speech_input(user_transcript, current_faces=self.last_faces)
+            if sec_res and sec_res.get("handled"):
+                resp_text = sec_res.get("spoken_response", "")
+                if sec_res.get("action") == "EXECUTE_PENDING":
+                    pending = sec_res.get("pending_action")
+                    if pending:
+                        exec_res = self._execute_intent(
+                            pending["intent"],
+                            pending["route"],
+                            pending["transcript"],
+                            session_id=session_id
+                        )
+                        if exec_res:
+                            resp_text = f"Authorization successful. {exec_res}"
+                        else:
+                            resp_text = "Authorization successful."
+                self.response_manager.add_response(resp_text, priority=2, force=True)
+                return resp_text
+
         route = self.router.route_intent(user_transcript)
         intent = route["intent"]
 
+        # 2. Voice Security Specific Commands
+        if intent == "SECURITY_LOCK":
+            self.security.lock_session()
+            resp = "Security session locked."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SECURITY_SET":
+            if self.security.is_configured():
+                resp = self.security.start_change()
+            else:
+                resp = self.security.start_enrollment()
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SECURITY_RESET":
+            resp = "To reset your Voice Security Password, please use the Reset Password option in Settings with your recovery code."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SECURITY_REMOVE":
+            resp = self.security.start_remove()
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SECURITY_STATUS":
+            is_cfg = self.security.is_configured()
+            is_auth = self.security.is_session_authorized()
+            is_lock, rem = self.security.is_locked_out()
+            if is_lock:
+                resp = f"Voice Security Password is configured and currently locked for {rem} seconds."
+            elif is_cfg:
+                auth_str = "unlocked" if is_auth else "locked"
+                resp = f"Voice Security Password is configured and currently {auth_str}."
+            else:
+                resp = "Voice Security Password is not configured."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # 3. Central Security Policy Gate (PROTECTED / HIGH_RISK)
+        level = self.security.get_security_level(intent)
+        if level in (SecurityLevel.PROTECTED, SecurityLevel.HIGH_RISK) and self.security.is_configured():
+            if not self.security.is_session_authorized():
+                challenge_msg = self.security.start_challenge({
+                    "intent": intent,
+                    "route": route,
+                    "transcript": user_transcript,
+                    "level": level
+                })
+                self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                return challenge_msg
+
+            # If authorized, check High-Risk 2FA (Voice + Live Face)
+            if level == SecurityLevel.HIGH_RISK and self.security.is_face_2fa_required():
+                face_ok, face_msg, face_user = self.security.evaluate_live_face_2fa(self.last_faces)
+                if not face_ok:
+                    resp = f"Action denied. High-risk actions require live face confirmation. {face_msg}"
+                    self.response_manager.add_response(resp, priority=2, force=True)
+                    return resp
+
+        # 4. Normal Intent Execution
+        return self._execute_intent(intent, route, user_transcript, session_id=session_id)
+
+    def _execute_intent(self, intent: str, route: Dict, user_transcript: str, session_id: Optional[str] = None) -> Optional[str]:
+        """
+        Executes the resolved intent logic.
+        """
         # --- PERSISTENT LONG-TERM MEMORY INTENTS ---
         if intent == "MEMORY_SAVE":
             raw_cmd = user_transcript

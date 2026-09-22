@@ -2799,9 +2799,9 @@ class SGCubeApp:
         if not user_text:
             return False
 
-        print(f"[VOICE] user_speech_turn_finalized: '{user_text}'")
-        # Store full user message in persistent conversation history
-        self.engine.history.add_message(self.active_history_session_id, "user", user_text)
+        is_security_input = hasattr(self.engine, 'security') and (self.engine.security.current_state.value != "IDLE")
+        log_text = "[VOICE_PASSWORD_REDACTED]" if is_security_input else user_text
+        print(f"[VOICE] user_speech_turn_finalized: '{log_text}'")
 
         local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id)
         if local_response:
@@ -2812,6 +2812,10 @@ class SGCubeApp:
             self._clear_playback_queue()
 
             self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", local_response))
+            if is_security_input:
+                self.engine.history.add_message(self.active_history_session_id, "user", "[VOICE_PASSWORD_REDACTED]")
+            else:
+                self.engine.history.add_message(self.active_history_session_id, "user", user_text)
             self.engine.history.add_message(self.active_history_session_id, "assistant", local_response)
             
             # Immediately update Quick Memory card in GUI HUD
@@ -3770,6 +3774,144 @@ class SGCubeApp:
         entry_dname.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=2)
 
         prof_grid.columnconfigure(1, weight=1)
+
+        # 🛡️ Voice Security Password & Authorization Card (SG CUBE 2.5)
+        sec_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        sec_card.pack(fill=tk.X, pady=(10, 10), ipady=6)
+
+        sec_title = tk.Label(sec_card, text="🛡️ Voice Security Password & Authorization", bg=COLOR_PANEL_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        sec_title.pack(anchor="w", padx=12, pady=(6, 2))
+
+        def get_sec_status():
+            is_cfg = self.engine.security.is_configured()
+            is_auth = self.engine.security.is_session_authorized()
+            is_lock, lock_rem = self.engine.security.is_locked_out()
+            if is_lock:
+                return f"Status: Temporarily Locked ({lock_rem}s remaining)", COLOR_ALERT_RED
+            elif is_cfg:
+                status_txt = "Configured (Active Session)" if is_auth else "Configured (Locked)"
+                return f"Status: {status_txt}", (COLOR_STATUS_GREEN if is_auth else COLOR_CYAN_PRIMARY)
+            else:
+                return "Status: Not Configured", COLOR_TEXT_MUTED
+
+        st_txt, st_col = get_sec_status()
+        lbl_sec_status = tk.Label(sec_card, text=st_txt, bg=COLOR_PANEL_SECONDARY, fg=st_col, font=("Segoe UI", 9, "bold"))
+        lbl_sec_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+        var_face_2fa = tk.BooleanVar(value=self.engine.security.is_face_2fa_required())
+        def toggle_face_2fa():
+            self.engine.security.set_face_2fa_required(var_face_2fa.get())
+
+        chk_2fa = tk.Checkbutton(
+            sec_card,
+            text="Require Live Face Confirmation for High-Risk Actions (2FA)",
+            variable=var_face_2fa,
+            bg=COLOR_PANEL_SECONDARY,
+            fg=COLOR_TEXT_PRIMARY,
+            selectcolor=COLOR_PANEL_DEEP,
+            activebackground=COLOR_PANEL_SECONDARY,
+            activeforeground=COLOR_CYAN_PRIMARY,
+            font=("Segoe UI", 9),
+            command=toggle_face_2fa
+        )
+        chk_2fa.pack(anchor="w", padx=10, pady=(0, 6))
+
+        sec_btn_row = tk.Frame(sec_card, bg=COLOR_PANEL_SECONDARY)
+        sec_btn_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        def refresh_sec_ui():
+            txt, col = get_sec_status()
+            lbl_sec_status.config(text=txt, fg=col)
+
+        def cmd_set_password():
+            import tkinter.simpledialog as sd
+            p1 = sd.askstring("Set Voice Security Password", "Enter new voice security password phrase (at least 2 words):", parent=dialog, show="•")
+            if not p1 or not p1.strip():
+                return
+            p2 = sd.askstring("Confirm Voice Security Password", "Repeat the voice security password phrase:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The passwords do not match. Please try again.", parent=dialog)
+                return
+            ok, msg, rc = self.engine.security.set_password(p1.strip())
+            if ok:
+                rc_msg = f"\n\nIMPORTANT: Save your one-time Recovery Code:\n\n{rc}\n\nThis code cannot be displayed again." if rc else ""
+                messagebox.showinfo("Success", f"{msg}{rc_msg}", parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_change_password():
+            import tkinter.simpledialog as sd
+            cur = sd.askstring("Change Password", "Enter your CURRENT voice security password:", parent=dialog, show="•")
+            if not cur:
+                return
+            p1 = sd.askstring("New Password", "Enter your NEW voice security password (at least 2 words):", parent=dialog, show="•")
+            if not p1:
+                return
+            p2 = sd.askstring("Confirm New Password", "Repeat your NEW voice security password:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The new passwords do not match.", parent=dialog)
+                return
+            ok, msg = self.engine.security.change_password(cur.strip(), p1.strip())
+            if ok:
+                messagebox.showinfo("Success", msg, parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_reset_password():
+            import tkinter.simpledialog as sd
+            rc = sd.askstring("Reset Password", "Enter your one-time Recovery Code (e.g. RC-XXXX-XXXX):", parent=dialog)
+            if not rc:
+                return
+            p1 = sd.askstring("New Password", "Enter your NEW voice security password (at least 2 words):", parent=dialog, show="•")
+            if not p1:
+                return
+            p2 = sd.askstring("Confirm New Password", "Repeat your NEW voice security password:", parent=dialog, show="•")
+            if p1.strip().lower() != (p2 or "").strip().lower():
+                messagebox.showerror("Mismatch", "The new passwords do not match.", parent=dialog)
+                return
+            ok, msg, new_rc = self.engine.security.reset_with_recovery_code(rc.strip(), p1.strip())
+            if ok:
+                rc_msg = f"\n\nYour NEW one-time Recovery Code is:\n\n{new_rc}\n\nPlease save it in a safe place." if new_rc else ""
+                messagebox.showinfo("Success", f"{msg}{rc_msg}", parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_remove_password():
+            import tkinter.simpledialog as sd
+            cur = sd.askstring("Remove Password", "Enter your CURRENT voice security password to disable protection:", parent=dialog, show="•")
+            if not cur:
+                return
+            if not messagebox.askyesno("Confirm Removal", "Removing your Voice Security Password will disable protection for sensitive features.\n\nAre you sure you want to continue?", parent=dialog):
+                return
+            ok, msg = self.engine.security.remove_password(cur.strip())
+            if ok:
+                messagebox.showinfo("Success", msg, parent=dialog)
+            else:
+                messagebox.showwarning("Notice", msg, parent=dialog)
+            refresh_sec_ui()
+
+        def cmd_lock_now():
+            self.engine.security.lock_session()
+            messagebox.showinfo("Session Locked", "Active security authorization session has been revoked.", parent=dialog)
+            refresh_sec_ui()
+
+        btn_set_p = tk.Button(sec_btn_row, text="Set Password", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_set_password)
+        btn_set_p.pack(side=tk.LEFT, padx=1)
+
+        btn_chg_p = tk.Button(sec_btn_row, text="Change", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_change_password)
+        btn_chg_p.pack(side=tk.LEFT, padx=1)
+
+        btn_rst_p = tk.Button(sec_btn_row, text="Reset", bg=COLOR_PANEL_DEEP, fg=COLOR_ORANGE, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_reset_password)
+        btn_rst_p.pack(side=tk.LEFT, padx=1)
+
+        btn_rem_p = tk.Button(sec_btn_row, text="Remove", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_remove_password)
+        btn_rem_p.pack(side=tk.LEFT, padx=1)
+
+        btn_lck_p = tk.Button(sec_btn_row, text="Lock Now", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_lock_now)
+        btn_lck_p.pack(side=tk.LEFT, padx=1)
 
         sc_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
         sc_card.pack(fill=tk.X, pady=(10, 10), ipady=6)

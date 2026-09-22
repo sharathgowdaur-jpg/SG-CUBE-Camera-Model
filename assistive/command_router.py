@@ -219,5 +219,25 @@ class CommandRouter:
         if any(p in clean_text for p in ["go to sleep", "stop listening", "sleep mode", "deactivate"]):
             return {"intent": "SLEEP", "target": None, "params": {}}
 
+        # 19. Voice Security Commands (SG CUBE 2.5)
+        if any(p in clean_text for p in ["lock security", "lock session", "revoke security", "lock voice security", "lock my session"]):
+            return {"intent": "SECURITY_LOCK", "target": None, "params": {}}
+
+        if any(p in clean_text for p in [
+            "set my security word", "set security word", "set security password", "set voice security password",
+            "set security passphrase", "set my security password", "change security password", "change my security password",
+            "change voice security password", "change security word", "update security password"
+        ]):
+            return {"intent": "SECURITY_SET", "target": None, "params": {}}
+
+        if any(p in clean_text for p in ["reset security password", "reset voice security password", "recover security password", "reset security word"]):
+            return {"intent": "SECURITY_RESET", "target": None, "params": {}}
+
+        if any(p in clean_text for p in ["remove security password", "remove voice security password", "remove security word", "delete security password"]):
+            return {"intent": "SECURITY_REMOVE", "target": None, "params": {}}
+
+        if any(p in clean_text for p in ["is security enabled", "security status", "check security status", "check voice security"]):
+            return {"intent": "SECURITY_STATUS", "target": None, "params": {}}
+
         # Fallback to General Gemini Live Reasoning
         return {"intent": "GENERAL", "target": None, "params": {}}
