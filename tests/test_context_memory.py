@@ -285,7 +285,7 @@ class TestContextMemory(unittest.TestCase):
         r_rec1 = self.router.route_command("where did I say my laptop is")
         self.assertEqual(r_rec1["intent"], "MEMORY_RECALL")
 
-        r_rec2 = self.router.route_command("where is my laptop")
+        r_rec2 = self.router.route_command("where did I put my keys")
         self.assertEqual(r_rec2["intent"], "MEMORY_RECALL")
 
         # Preference recall intent

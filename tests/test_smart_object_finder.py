@@ -634,6 +634,65 @@ class TestSmartObjectFinder(unittest.TestCase):
         self.assertFalse(st2["object_finder"]["active_search"])
         self.assertTrue(engine.object_finder.active_search.found)
 
+    def test_36_where_is_my_phone_end_to_end_hierarchy(self):
+        """ Verify 'where is my phone', 'find phone', 'where did I see my phone' route properly """
+        engine = VisionEngine(data_dir=self.test_dir)
+
+        # 1. Unseen returns natural fallback without hallucination or memory error
+        resp = engine.process_user_speech_query("Where is my phone?")
+        self.assertIsNotNone(resp)
+        self.assertIn("don't currently see", resp.lower())
+        self.assertNotIn("memory saved for that", resp.lower())
+
+        # 2. Live scene detection
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        engine.object_detector.detect_objects_heuristic = lambda f: [{
+            "id": 1,
+            "label": "phone",
+            "class_name": "phone",
+            "confidence": 0.95,
+            "bbox": (200, 150, 100, 120),
+            "color": "black",
+            "h_zone": "CENTER",
+            "v_zone": "MIDDLE"
+        }]
+        engine.process_frame(test_frame)
+        resp_live = engine.process_user_speech_query("Where is my phone?")
+        self.assertIsNotNone(resp_live)
+        self.assertIn("phone", resp_live.lower())
+
+        # 3. 'Find phone' routing
+        resp_find = engine.process_user_speech_query("Find phone")
+        self.assertIsNotNone(resp_find)
+        self.assertIn("phone", resp_find.lower())
+
+        # 4. 'Where did I see my phone' routing
+        resp_last_seen = engine.process_user_speech_query("Where did I see my phone?")
+        self.assertIsNotNone(resp_last_seen)
+        self.assertIn("phone", resp_last_seen.lower())
+
+    def test_37_pronoun_followup_last_seen(self):
+        """ Context pronoun resolution for 'when did I last see it?' """
+        engine = VisionEngine(data_dir=self.test_dir)
+        now = time.time()
+        engine.object_finder.last_seen_buffer["bottle"] = LastSeenObservation(
+            class_name="bottle",
+            timestamp=now - 20.0,
+            bbox=(100, 100, 50, 100),
+            relative_position={"h_verbal": "on your left"},
+            scene_relationship="on the table",
+            ttl_seconds=120.0
+        )
+        # First query establishes active object
+        r1 = engine.process_user_speech_query("Where is my bottle?")
+        self.assertIsNotNone(r1)
+        self.assertEqual(engine.context.active_object.name, "bottle")
+
+        # Follow-up query with pronoun
+        r2 = engine.process_user_speech_query("When did I last see it?")
+        self.assertIsNotNone(r2)
+        self.assertIn("bottle", r2.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

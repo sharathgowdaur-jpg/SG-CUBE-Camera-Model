@@ -443,9 +443,9 @@ class VisionEngine:
                             session_id=session_id
                         )
                         if exec_res:
-                            resp_text = f"Authorization successful. {exec_res}"
+                            resp_text = f"Password verified. Proceeding. {exec_res}"
                         else:
-                            resp_text = "Authorization successful."
+                            resp_text = "Password verified. Proceeding."
                 self.response_manager.add_response(resp_text, priority=2, force=True)
                 return resp_text
 
@@ -1110,6 +1110,48 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        elif intent in ("TASK_EDIT", "REMINDER_EDIT"):
+            task_name = route["params"].get("task_name") or user_transcript
+            new_val = route["params"].get("new_value")
+            
+            # Check if new_val is a time / date
+            new_due_at = None
+            new_prio = None
+            new_title = None
+            
+            if new_val:
+                # Check for priority
+                if any(p in new_val.lower() for p in ["urgent", "high priority", "high"]):
+                    new_prio = "HIGH" if "urgent" not in new_val.lower() else "URGENT"
+                elif any(p in new_val.lower() for p in ["low priority", "low"]):
+                    new_prio = "LOW"
+                elif any(p in new_val.lower() for p in ["normal priority", "normal"]):
+                    new_prio = "NORMAL"
+                else:
+                    # Try parsing date / time
+                    parsed_time = TaskDateTimeParser.parse_task_and_time(f"remind me at {new_val}")
+                    if parsed_time.get("due_at"):
+                        new_due_at = parsed_time["due_at"]
+
+            ok, task, msg = self.tasks.edit_task(
+                task_name,
+                new_title=new_title,
+                new_due_at=new_due_at,
+                new_priority=new_prio
+            )
+            if ok and task:
+                if new_due_at:
+                    resp = f"Updated '{task.title}' due time to {task.formatted_due_time()}."
+                elif new_prio:
+                    resp = f"Updated '{task.title}' priority to {task.priority}."
+                else:
+                    resp = msg
+                self.context.set_active_task(task_id=task.id, title=task.title)
+            else:
+                resp = msg
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "REMINDER_SNOOZE":
             snooze_sec = TaskDateTimeParser.parse_snooze_duration(user_transcript)
             ok, task, msg = self.tasks.snooze_reminder(snooze_seconds=snooze_sec)
@@ -1260,6 +1302,46 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        elif intent == "AUTOMATION_READ_SCREEN":
+            app_target = route["params"].get("app") or route.get("target")
+            req = self.automation.create_request(AutomationActionType.READ_SCREEN, app_target or "screen", params={"app": app_target})
+            res = self.automation.execute_request(req)
+            resp = res.spoken_response
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "AUTOMATION_READ_CHAT":
+            req = self.automation.create_request(AutomationActionType.READ_SCREEN, "whatsapp", params={"app": "whatsapp"})
+            res = self.automation.execute_request(req)
+            resp = res.spoken_response
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "AUTOMATION_OPEN_CHAT":
+            contact = route["params"].get("contact") or route.get("target") or user_transcript
+            ok, spoken = self.automation.ui_automation.open_chat_with(contact)
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "AUTOMATION_SEND_MESSAGE":
+            contact = route["params"].get("contact") or route.get("target")
+            msg_text = route["params"].get("message", "")
+            draft = self.automation.ui_automation.prepare_send_message(contact, msg_text)
+            if draft.get("status") == "LOCKED":
+                resp = draft.get("spoken_response", "WhatsApp is locked. Please unlock it to proceed.")
+            elif draft.get("status") == "REQUIRES_CONFIRMATION":
+                req = self.automation.create_request(
+                    AutomationActionType.SEND_MESSAGE,
+                    contact,
+                    params={"contact": contact, "message": msg_text}
+                )
+                self.context.set_pending_automation(req)
+                resp = draft.get("spoken_response", f"Ready to send '{msg_text}' to {contact}. Should I send it?")
+            else:
+                resp = draft.get("spoken_response", "Unable to prepare message.")
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "AUTOMATION_CONFIRM":
             pending_req = route["params"].get("pending_request") or self.context.get_pending_automation()
             if pending_req:
@@ -1280,7 +1362,7 @@ class VisionEngine:
 
         elif intent == "AUTOMATION_CANCEL":
             self.context.clear_pending_automation()
-            resp = "Action cancelled."
+            resp = "Message cancelled." if (route.get("params") and "pending_request" in route["params"] and getattr(route["params"]["pending_request"], "action_type", None) == AutomationActionType.SEND_MESSAGE) else "Action cancelled."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 

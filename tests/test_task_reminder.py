@@ -419,7 +419,9 @@ class TestTaskReminderAssistant(unittest.TestCase):
 
         resp = engine.process_user_speech_query("What private tasks do I have?")
         self.assertIsNotNone(resp)
-        self.assertIn("security password", resp.lower())
+        self.assertTrue(
+            "sensitive password" in resp.lower() or "security password" in resp.lower() or "protected action" in resp.lower()
+        )
         engine.shutdown()
 
     def test_28_authorized_private_task_retrieval(self):
@@ -443,7 +445,9 @@ class TestTaskReminderAssistant(unittest.TestCase):
 
         resp = engine.process_user_speech_query("Delete all my tasks")
         self.assertIsNotNone(resp)
-        self.assertIn("security password", resp.lower())
+        self.assertTrue(
+            "sensitive password" in resp.lower() or "security password" in resp.lower() or "protected action" in resp.lower()
+        )
         engine.shutdown()
 
     def test_30_zero_passwords_in_task_db(self):

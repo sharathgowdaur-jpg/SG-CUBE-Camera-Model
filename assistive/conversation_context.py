@@ -980,14 +980,14 @@ class ConversationContextManager:
         # ---------------------------------------------------------------------
         if self.state == ConversationState.AWAITING_CONFIRMATION or self.pending_automation:
             is_affirmative = (
-                clean_norm in ["yes", "yes please", "confirm", "do it", "sure", "proceed", "please do", "okay", "ok", "yep", "yeah", "yes do it", "go ahead"] or
-                any(clean_norm.startswith(p) for p in ["yes", "confirm", "sure", "proceed", "please do", "go ahead", "do it"]) or
-                any(clean_norm.endswith(p) for p in ["confirm", "proceed", "do it", "please do"])
+                clean_norm in ["yes", "yes please", "confirm", "do it", "sure", "proceed", "please do", "okay", "ok", "yep", "yeah", "yes do it", "go ahead", "send it", "send", "yes send it", "yes send", "send message", "send the message", "yes send the message"] or
+                any(clean_norm.startswith(p) for p in ["yes", "confirm", "sure", "proceed", "please do", "go ahead", "do it", "send it", "send"]) or
+                any(clean_norm.endswith(p) for p in ["confirm", "proceed", "do it", "please do", "send it", "send"])
             )
             is_negative = (
-                clean_norm in ["no", "cancel", "stop", "dont", "dont do it", "do not", "do not do it", "nope", "abort", "no thanks", "no dont", "no don't"] or
-                any(clean_norm.startswith(p) for p in ["no", "cancel", "stop", "dont", "do not", "abort", "never mind"]) or
-                any(clean_norm.endswith(p) for p in ["cancel that", "dont do it", "do not do it", "stop"])
+                clean_norm in ["no", "cancel", "stop", "dont", "dont do it", "do not", "do not do it", "nope", "abort", "no thanks", "no dont", "no don't", "cancel message", "dont send", "dont send it", "do not send"] or
+                any(clean_norm.startswith(p) for p in ["no", "cancel", "stop", "dont", "do not", "abort", "never mind", "dont send"]) or
+                any(clean_norm.endswith(p) for p in ["cancel that", "dont do it", "do not do it", "stop", "cancel message", "dont send it", "dont send"])
             )
 
             if is_affirmative and not is_negative:
@@ -1290,8 +1290,12 @@ class ConversationContextManager:
                         "clarification_prompt": None
                     }
 
-            # Check for last seen query ("Where was it last seen?")
-            if any(w in clean for w in ["last seen", "where was it", "where did you last see"]):
+            # Check for last seen query ("Where was it last seen?", "When did I last see it?")
+            if any(w in clean for w in [
+                "last seen", "where was it", "when was it", "where did you last see",
+                "when did you last see", "where did i last see", "when did i last see",
+                "where did i see it", "when did i see it", "where was it seen", "when was it seen"
+            ]):
                 resolved_target, entity_type, is_amb, prompt = self.resolve_reference(clean, current_scene, memory_manager, task_manager, person_tracker, now)
                 if is_amb:
                     return {

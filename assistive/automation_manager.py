@@ -20,6 +20,7 @@ import uuid
 import ctypes
 import shutil
 import logging
+import ipaddress
 import subprocess
 import webbrowser
 from collections import deque
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple, Union
 from urllib.parse import urlparse
-import ipaddress
+from .ui_automation_manager import UIAutomationManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,8 @@ class AutomationActionType(str, Enum):
     OPEN_FOLDER = "OPEN_FOLDER"
     COPY_TEXT = "COPY_TEXT"
     LOCK_WORKSTATION = "LOCK_WORKSTATION"
+    READ_SCREEN = "READ_SCREEN"
+    SEND_MESSAGE = "SEND_MESSAGE"
     STATUS = "STATUS"
     UNKNOWN = "UNKNOWN"
 
@@ -227,6 +230,17 @@ class AutomationManager:
             process_names=["msedge.exe", "chrome.exe", "firefox.exe"],
             aliases=["browser", "web browser", "edge", "ms edge", "chrome", "google chrome", "firefox", "internet"]
         ),
+        "whatsapp": AutomationActionDefinition(
+            action_type=AutomationActionType.OPEN_APP,
+            name="whatsapp",
+            display_name="WhatsApp",
+            description="WhatsApp Desktop",
+            default_risk=AutomationRiskLevel.LOW_RISK,
+            default_permission=AutomationPermission.ALLOWED,
+            executable_candidates=["WhatsApp.exe", "WhatsApp"],
+            process_names=["WhatsApp.exe", "WhatsApp.Root.exe"],
+            aliases=["whatsapp", "whatsapp desktop", "whats app", "the whatsapp", "messages", "chat"]
+        ),
     }
 
     # Default Allowed Domains for Safe Web Navigation
@@ -288,6 +302,8 @@ class AutomationManager:
 
         # In-memory permissions dictionary: action_key -> AutomationPermission
         self._permissions: Dict[str, AutomationPermission] = self._load_permissions()
+        # UI Automation & screen perception subsystem
+        self.ui_automation = UIAutomationManager(automation_manager=self)
 
     def _default_permissions(self) -> Dict[str, AutomationPermission]:
         """Returns standard default permission map."""
@@ -298,6 +314,8 @@ class AutomationManager:
             AutomationActionType.OPEN_FOLDER.value: AutomationPermission.ASK_EACH_TIME,
             AutomationActionType.COPY_TEXT.value: AutomationPermission.ALLOWED,
             AutomationActionType.LOCK_WORKSTATION.value: AutomationPermission.ASK_EACH_TIME,
+            AutomationActionType.READ_SCREEN.value: AutomationPermission.ALLOWED,
+            AutomationActionType.SEND_MESSAGE.value: AutomationPermission.ASK_EACH_TIME,
             AutomationActionType.STATUS.value: AutomationPermission.ALLOWED,
         }
 
@@ -598,6 +616,18 @@ class AutomationManager:
             resolved_target = target
             risk_level = AutomationRiskLevel.SAFE
 
+        elif action_type == AutomationActionType.READ_SCREEN:
+            display_name = f"Read screen ({target})" if target else "Read screen"
+            resolved_target = target
+            risk_level = AutomationRiskLevel.SAFE
+
+        elif action_type == AutomationActionType.SEND_MESSAGE:
+            contact = params.get("contact", target)
+            msg_text = params.get("message", "")
+            display_name = f"Send message to {contact}"
+            resolved_target = contact
+            risk_level = AutomationRiskLevel.LOW_RISK
+
         elif action_type == AutomationActionType.LOCK_WORKSTATION:
             display_name = "Workstation Lock"
             resolved_target = "LockWorkStation"
@@ -717,6 +747,10 @@ class AutomationManager:
                 return self._exec_copy_text(request)
             elif request.action_type == AutomationActionType.LOCK_WORKSTATION:
                 return self._exec_lock_workstation(request)
+            elif request.action_type == AutomationActionType.READ_SCREEN:
+                return self._exec_read_screen(request)
+            elif request.action_type == AutomationActionType.SEND_MESSAGE:
+                return self._exec_send_message(request)
             elif request.action_type == AutomationActionType.STATUS:
                 return self._exec_status(request)
             else:
@@ -739,7 +773,45 @@ class AutomationManager:
             return f"copy text to the clipboard"
         elif request.action_type == AutomationActionType.LOCK_WORKSTATION:
             return "lock your workstation"
+        elif request.action_type == AutomationActionType.SEND_MESSAGE:
+            contact = request.params.get("contact", request.target)
+            msg_text = request.params.get("message", "")
+            return f"send '{msg_text}' to {contact}"
         return f"proceed with {request.display_name}"
+
+    def _exec_read_screen(self, request: AutomationRequest) -> AutomationResult:
+        """Extracts structured readable content from active window via UIAutomationManager."""
+        app_target = request.params.get("app") or request.target
+        res = self.ui_automation.read_screen_content(app_name=app_target)
+        status = AutomationResultStatus.SUCCESS if res.get("status") == "SUCCESS" else AutomationResultStatus.FAILED
+        spoken = res.get("spoken_response", "No readable content found on screen.")
+        msg = f"Screen read for {res.get('app', 'screen')}: {spoken}"
+        self._record_audit(request, status, msg)
+        return AutomationResult(
+            status=status,
+            message=msg,
+            spoken_response=spoken,
+            request=request,
+            action_type=request.action_type,
+            target=request.target
+        )
+
+    def _exec_send_message(self, request: AutomationRequest) -> AutomationResult:
+        """Sends a message via UIAutomationManager upon verified confirmation."""
+        contact = request.params.get("contact", request.target)
+        msg_text = request.params.get("message", "")
+        ok, spoken = self.ui_automation.confirm_send_message(contact, msg_text)
+        status = AutomationResultStatus.SUCCESS if ok else AutomationResultStatus.FAILED
+        msg = f"Send message to {contact}: {spoken}"
+        self._record_audit(request, status, msg)
+        return AutomationResult(
+            status=status,
+            message=msg,
+            spoken_response=spoken,
+            request=request,
+            action_type=request.action_type,
+            target=contact
+        )
 
     # --------------------------------------------------------------------------
     # Concrete Action Implementations (Strict Non-Shell)

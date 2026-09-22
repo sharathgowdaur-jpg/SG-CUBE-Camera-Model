@@ -102,7 +102,7 @@ class SmartObjectFinder:
     """
 
     KNOWN_OBJECT_SYNONYMS = {
-        "phone": ["smartphone", "cellphone", "mobile", "iphone", "android", "phone"],
+        "phone": ["cell phone", "smartphone", "cellphone", "mobile", "iphone", "android", "phone"],
         "bottle": ["water bottle", "waterbottle", "flask", "bottle", "soda can", "tin can"],
         "chair": ["armchair", "seat", "stool", "chair"],
         "laptop": ["laptop", "computer", "notebook", "screen", "macbook", "pc"],
@@ -339,32 +339,46 @@ class SmartObjectFinder:
         # =====================================================================
         # STAGE 2: TRANSIENT LAST-SEEN BUFFER (Recent Observations)
         # =====================================================================
-        if target_class in self.last_seen_buffer:
-            obs = self.last_seen_buffer[target_class]
-            if not obs.is_expired(now):
-                age = obs.age_seconds(now)
-                h_verbal = obs.relative_position.get("h_verbal", "in front of you")
-                rel_str = f" {obs.scene_relationship}" if obs.scene_relationship else ""
+        obs = self.last_seen_buffer.get(target_class)
+        if not obs:
+            synonyms = self.KNOWN_OBJECT_SYNONYMS.get(target_class, [])
+            for syn in synonyms:
+                if syn in self.last_seen_buffer:
+                    obs = self.last_seen_buffer[syn]
+                    break
+        if not obs:
+            for buf_k, buf_v in self.last_seen_buffer.items():
+                if buf_k in target_class or target_class in buf_k:
+                    obs = buf_v
+                    break
+                buf_canon, _ = self.normalize_target_and_color(buf_k)
+                if buf_canon == target_class:
+                    obs = buf_v
+                    break
+        if obs and not obs.is_expired(now):
+            age = obs.age_seconds(now)
+            h_verbal = obs.relative_position.get("h_verbal", "in front of you")
+            rel_str = f" {obs.scene_relationship}" if obs.scene_relationship else ""
 
-                if age < 15.0:
-                    state = ObjectFinderState.RECENTLY_SEEN.value
-                    resp_text = f"I saw your {target_class} a few seconds ago{rel_str} {h_verbal}."
-                else:
-                    state = ObjectFinderState.LAST_SEEN.value
-                    resp_text = f"Your {target_class} was last seen{rel_str} {h_verbal}."
+            if age < 15.0:
+                state = ObjectFinderState.RECENTLY_SEEN.value
+                resp_text = f"I saw your {target_class} a few seconds ago{rel_str} {h_verbal}."
+            else:
+                state = ObjectFinderState.LAST_SEEN.value
+                resp_text = f"Your {target_class} was last seen{rel_str} {h_verbal}."
 
-                res_dict = {
-                    "state": state,
-                    "found": True,
-                    "target": target_class,
-                    "age_seconds": round(age, 1),
-                    "position": h_verbal,
-                    "relationship": obs.scene_relationship,
-                    "response_text": resp_text,
-                    "timestamp": obs.timestamp
-                }
-                self.last_search_result = res_dict
-                return res_dict
+            res_dict = {
+                "state": state,
+                "found": True,
+                "target": target_class,
+                "age_seconds": round(age, 1),
+                "position": h_verbal,
+                "relationship": obs.scene_relationship,
+                "response_text": resp_text,
+                "timestamp": obs.timestamp
+            }
+            self.last_search_result = res_dict
+            return res_dict
 
         # =====================================================================
         # STAGE 3: EXPLICIT SAVED MEMORY (Feature 2 with Voice Security Gate)

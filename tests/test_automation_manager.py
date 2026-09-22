@@ -38,6 +38,13 @@ from assistive.conversation_context import (
     TopicType,
     ActiveAutomationRef
 )
+from assistive.ui_automation_manager import (
+    UIAutomationManager,
+    UIAppType,
+    UIWindowInfo,
+    WhatsAppChatMessage,
+    WhatsAppScreenState
+)
 from assistive.command_router import CommandRouter
 from assistive.security_manager import SecurityManager, SecurityLevel
 from assistive.vision_engine import VisionEngine
@@ -703,6 +710,277 @@ class TestAutomationEdgeCasesAndPolicies(unittest.TestCase):
         self.assertEqual(r["target"], "duckduckgo.com")
 
 
+class TestUIAutomationAndWhatsApp(unittest.TestCase):
+    """
+    Tests for SG CUBE 2.5 Controlled UI Automation & WhatsApp Integration:
+    - Active window detection & classification
+    - App lock perception & safe refusal
+    - Main content extraction ("read screen") across apps
+    - WhatsApp two-step send message confirmation lifecycle
+    - Command routing & VisionEngine end-to-end flows
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.mgr = AutomationManager(pref_dir=self.temp_dir)
+        self.ui = self.mgr.ui_automation
+        self.router = CommandRouter()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_whatsapp_allowlist_resolution(self):
+        # Resolve WhatsApp and aliases
+        defn1 = self.mgr.resolve_app("whatsapp")
+        self.assertIsNotNone(defn1)
+        self.assertEqual(defn1.display_name, "WhatsApp")
+        self.assertIn("WhatsApp.exe", defn1.executable_candidates)
+
+        defn2 = self.mgr.resolve_app("whats app")
+        self.assertIsNotNone(defn2)
+        self.assertEqual(defn2.display_name, "WhatsApp")
+
+        close_wa = self.mgr.resolve_close_target("whatsapp")
+        self.assertIsNotNone(close_wa)
+        self.assertEqual(close_wa[0], "WhatsApp")
+
+    def test_app_classification(self):
+        self.assertEqual(self.ui.classify_app_type("WhatsApp"), UIAppType.WHATSAPP)
+        self.assertEqual(self.ui.classify_app_type("Untitled - Notepad"), UIAppType.NOTEPAD)
+        self.assertEqual(self.ui.classify_app_type("Calculator"), UIAppType.CALCULATOR)
+        self.assertEqual(self.ui.classify_app_type("Documents", class_name="CabinetWClass"), UIAppType.EXPLORER)
+        self.assertEqual(self.ui.classify_app_type("Google - Google Chrome"), UIAppType.BROWSER)
+        self.assertEqual(self.ui.classify_app_type("Custom Game"), UIAppType.UNKNOWN)
+
+    def test_app_lock_detection_whatsapp(self):
+        # Mock locked state
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=True,
+            lock_prompt="WhatsApp is locked. Please unlock it to proceed."
+        )
+        is_locked, msg = self.ui.is_app_locked("whatsapp")
+        self.assertTrue(is_locked)
+        self.assertEqual(msg, "WhatsApp is locked. Please unlock it to proceed.")
+
+        # Read screen when locked
+        res = self.ui.read_screen_content("whatsapp")
+        self.assertEqual(res["status"], "LOCKED")
+        self.assertEqual(res["spoken_response"], "WhatsApp is locked. Please unlock it to proceed.")
+
+    def test_read_screen_whatsapp_active_chat(self):
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=False,
+            active_chat_name="Mom",
+            messages=[
+                WhatsAppChatMessage(sender="Mom", text="Are you coming home for dinner?", timestamp_str="6:30 PM"),
+                WhatsAppChatMessage(sender="You", text="Yes, I am leaving now.", timestamp_str="6:32 PM"),
+                WhatsAppChatMessage(sender="Mom", text="Great, drive safely!", timestamp_str="6:33 PM")
+            ]
+        )
+        res = self.ui.read_screen_content("whatsapp")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("You are in chat with Mom", res["spoken_response"])
+        self.assertIn("Great, drive safely!", res["spoken_response"])
+
+    def test_read_screen_whatsapp_chats_list(self):
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=False,
+            active_chat_name=None,
+            recent_chat_names=["Mom", "Alex", "Project Team", "Family Group"]
+        )
+        res = self.ui.read_screen_content("whatsapp")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("recent conversations: Mom, Alex, Project Team, Family Group", res["spoken_response"])
+
+    def test_read_screen_notepad(self):
+        self.ui._mock_notepad_content = "Meeting notes:\n1. Prepare SG CUBE 2.5 release\n2. Review UI automation"
+        res = self.ui.read_screen_content("notepad")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("Notepad contains: 'Meeting notes", res["spoken_response"])
+
+    def test_read_screen_notepad_empty(self):
+        self.ui._mock_notepad_content = ""
+        res = self.ui.read_screen_content("notepad")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["spoken_response"], "Notepad is currently empty.")
+
+    def test_read_screen_calculator(self):
+        self.ui._mock_calc_result = "42"
+        res = self.ui.read_screen_content("calculator")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["spoken_response"], "Calculator display shows 42.")
+
+    def test_read_screen_explorer(self):
+        self.ui._mock_explorer_state = {
+            "folder": "Documents",
+            "items": ["report.pdf", "notes.txt", "budget.xlsx"]
+        }
+        res = self.ui.read_screen_content("explorer")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("File Explorer is open at Documents", res["spoken_response"])
+        self.assertIn("report.pdf", res["spoken_response"])
+
+    def test_read_screen_browser(self):
+        self.ui._mock_browser_state = {"title": "Google Search"}
+        res = self.ui.read_screen_content("browser")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["spoken_response"], "Browser is open to Google Search.")
+
+    def test_read_screen_browser_with_content(self):
+        self.ui._mock_browser_state = {
+            "title": "Wikipedia - Artificial Intelligence",
+            "content": "Artificial intelligence is the intelligence of machines or software, as opposed to the intelligence of living beings."
+        }
+        res = self.ui.read_screen_content("browser")
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertIn("You are viewing Wikipedia - Artificial Intelligence", res["spoken_response"])
+        self.assertIn("Artificial intelligence is the intelligence of machines", res["spoken_response"])
+
+    def test_open_chat_with_contact(self):
+        ok, msg = self.ui.open_chat_with("Mom")
+        self.assertTrue(ok)
+        self.assertEqual(msg, "Opened chat with Mom.")
+
+    def test_open_chat_locked_error(self):
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=True
+        )
+        ok, msg = self.ui.open_chat_with("Mom")
+        self.assertFalse(ok)
+        self.assertIn("WhatsApp is locked", msg)
+
+    def test_whatsapp_message_send_flow(self):
+        # 1. Draft preparation
+        draft = self.ui.prepare_send_message("Mom", "I will be late")
+        self.assertEqual(draft["status"], "REQUIRES_CONFIRMATION")
+        self.assertEqual(draft["spoken_response"], "Ready to send 'I will be late' to Mom. Should I send it?")
+
+        # 2. Confirmed send
+        ok, send_msg = self.ui.confirm_send_message("Mom", "I will be late")
+        self.assertTrue(ok)
+        self.assertEqual(send_msg, "Message sent to Mom.")
+
+        # 3. Cancel
+        cancel_msg = self.ui.cancel_send_message()
+        self.assertEqual(cancel_msg, "Message cancelled.")
+
+    def test_whatsapp_message_send_when_locked(self):
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=True
+        )
+        draft = self.ui.prepare_send_message("Mom", "Hello")
+        self.assertEqual(draft["status"], "LOCKED")
+        self.assertIn("WhatsApp is locked", draft["spoken_response"])
+
+        ok, send_msg = self.ui.confirm_send_message("Mom", "Hello")
+        self.assertFalse(ok)
+        self.assertIn("WhatsApp is locked", send_msg)
+
+    def test_whatsapp_message_send_failure_verification(self):
+        self.ui._mock_whatsapp_state = WhatsAppScreenState(
+            is_open=True,
+            is_locked=False,
+            simulate_send_failure=True
+        )
+        ok, send_msg = self.ui.confirm_send_message("Mom", "I will be late")
+        self.assertFalse(ok)
+        self.assertIn("could not confirm if the message was sent", send_msg)
+
+    def test_command_router_ui_automation_intents(self):
+        # Read screen
+        r1 = self.router.route_intent("Read screen")
+        self.assertEqual(r1["intent"], "AUTOMATION_READ_SCREEN")
+
+        r2 = self.router.route_intent("What is on my screen?")
+        self.assertEqual(r2["intent"], "AUTOMATION_READ_SCREEN")
+
+        # Read chat
+        r3 = self.router.route_intent("Read this chat")
+        self.assertEqual(r3["intent"], "AUTOMATION_READ_CHAT")
+
+        r4 = self.router.route_intent("Read whatsapp messages")
+        self.assertEqual(r4["intent"], "AUTOMATION_READ_CHAT")
+
+        # Open chat with contact
+        r5 = self.router.route_intent("Open chat with Mom")
+        self.assertEqual(r5["intent"], "AUTOMATION_OPEN_CHAT")
+        self.assertEqual(r5["target"], "Mom")
+
+        r6 = self.router.route_intent("Chat with Alex")
+        self.assertEqual(r6["intent"], "AUTOMATION_OPEN_CHAT")
+        self.assertEqual(r6["target"], "Alex")
+
+        # Send message
+        r7 = self.router.route_intent("Send I will be late to Mom")
+        self.assertEqual(r7["intent"], "AUTOMATION_SEND_MESSAGE")
+        self.assertEqual(r7["params"]["contact"], "Mom")
+        self.assertEqual(r7["params"]["message"], "I will be late")
+
+        r8 = self.router.route_intent("Send message to Mom saying I will be home soon")
+        self.assertEqual(r8["intent"], "AUTOMATION_SEND_MESSAGE")
+        self.assertEqual(r8["params"]["contact"], "Mom")
+        self.assertEqual(r8["params"]["message"], "I will be home soon")
+
+        r9 = self.router.route_intent("Message Alex hello there")
+        self.assertEqual(r9["intent"], "AUTOMATION_SEND_MESSAGE")
+        self.assertEqual(r9["params"]["contact"], "Alex")
+        self.assertEqual(r9["params"]["message"], "hello there")
+
+    def test_vision_engine_read_screen_and_chat_e2e(self):
+        engine = VisionEngine(data_dir=self.temp_dir)
+        try:
+            # Set mock notepad content
+            engine.automation.ui_automation._mock_notepad_content = "Project notes: Complete release audit"
+            engine.automation.ui_automation._mock_active_window = {
+                "title": "Untitled - Notepad",
+                "class_name": "Notepad",
+                "process_name": "notepad.exe"
+            }
+            resp = engine.process_user_speech_query("Read screen")
+            self.assertIn("Notepad contains: 'Project notes", resp)
+
+            # Read WhatsApp chat
+            engine.automation.ui_automation._mock_whatsapp_state = WhatsAppScreenState(
+                is_open=True,
+                is_locked=False,
+                active_chat_name="Alice",
+                messages=[WhatsAppChatMessage(sender="Alice", text="Can we meet at 4?")]
+            )
+            resp_chat = engine.process_user_speech_query("Read this chat")
+            self.assertIn("You are in chat with Alice", resp_chat)
+            self.assertIn("Can we meet at 4?", resp_chat)
+        finally:
+            if hasattr(engine, "scheduler"):
+                engine.scheduler.stop()
+
+    def test_vision_engine_whatsapp_send_confirmation_e2e(self):
+        engine = VisionEngine(data_dir=self.temp_dir)
+        try:
+            # 1. User says "Send I will be late to Mom"
+            resp1 = engine.process_user_speech_query("Send I will be late to Mom")
+            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp1)
+            self.assertEqual(engine.context.state, ConversationState.AWAITING_CONFIRMATION)
+
+            # 2. User confirms with "Send it"
+            resp2 = engine.process_user_speech_query("Send it")
+            self.assertIn("Message sent to Mom.", resp2)
+
+            # 3. Test cancellation flow
+            resp3 = engine.process_user_speech_query("Send I will be late to Mom")
+            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp3)
+            resp4 = engine.process_user_speech_query("Cancel message")
+            self.assertIn("Message cancelled.", resp4)
+        finally:
+            if hasattr(engine, "scheduler"):
+                engine.scheduler.stop()
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

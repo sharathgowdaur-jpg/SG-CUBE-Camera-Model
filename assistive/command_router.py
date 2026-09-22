@@ -207,6 +207,20 @@ class CommandRouter:
                 else:
                     return {"intent": "TASK_DELETE", "target": clean_target, "params": {"task_name": clean_target, "query": text}}
 
+        # 3.45. Task / Reminder Edit ("Change my NLP task to 7 pm", "Update task report to high priority", "Reschedule my meeting to 4 pm")
+        edit_match = re.search(r'(?:change|update|reschedule|edit|move)\s+(?:my\s+)?(?:task\s+|reminder\s+|the\s+task\s+|the\s+reminder\s+)?(.+?)\s+(?:to|at|for)\s+(.+)', clean_text)
+        if edit_match and ("task" in clean_text or "reminder" in clean_text or clean_text.startswith("change") or clean_text.startswith("update") or clean_text.startswith("reschedule")):
+            if not any(w in clean_text for w in ["setting", "settings", "password", "volume", "brightness", "mode", "all", "memories"]):
+                target_name = edit_match.group(1).strip()
+                new_val = edit_match.group(2).strip()
+                clean_target = re.sub(r'\s+(?:task|reminder)$', '', target_name).strip()
+                intent_name = "REMINDER_EDIT" if "reminder" in clean_text else "TASK_EDIT"
+                return {
+                    "intent": intent_name,
+                    "target": clean_target,
+                    "params": {"task_name": clean_target, "new_value": new_val, "query": text}
+                }
+
         # 3.5. Task & Reminder Listing ("What are my tasks?", "Show today's tasks", "What reminders do I have today?", "Show private tasks")
         if "private task" in clean_text or "private reminder" in clean_text:
             return {"intent": "TASK_LIST_PRIVATE", "target": None, "params": {}}
@@ -286,11 +300,15 @@ class CommandRouter:
         ]):
             return {"intent": "SCENE_QUERY_OBSTACLE", "target": "path", "params": {"query": text}}
 
-        # 7.5. Object Last-Seen Query ("Where was my bottle last seen?", "When was my phone last seen?")
-        last_seen_match = re.search(r'(?:where|when)\s+(?:was|were|did you)\s+(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+?)\s+(?:last seen|last located|seen last)', clean_text)
-        if last_seen_match:
+        # 7.5. Object Last-Seen Query ("Where was my bottle last seen?", "When was my phone last seen?", "Where did I see my phone?")
+        last_seen_match = re.search(r'(?:where|when)\s+(?:was|were|did you|did i)\s+(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+?)\s*(?:last seen|last located|seen last|last see|see last|\bseen\b|\bsee\b)\s*[? .!]*$', clean_text)
+        if not last_seen_match:
+            last_seen_match = re.search(r'(?:where|when)\s+(?:did\s+i\s+see|did\s+you\s+see|did\s+i\s+last\s+see|did\s+you\s+last\s+see)\s+(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
+        if last_seen_match and not any(w in clean_text for w in ["who", "read", "money", "person", "people"]):
             entity_str = last_seen_match.group(1).strip().rstrip("? .!")
-            return {"intent": "OBJECT_LAST_SEEN", "target": entity_str, "params": {"object_name": entity_str, "query": text}}
+            entity_clean = re.sub(r'\s+(?:is|are|located|kept|stored|last seen|seen)$', '', entity_str).strip()
+            if entity_clean and entity_clean not in ["it", "this", "that", "there"]:
+                return {"intent": "OBJECT_LAST_SEEN", "target": entity_clean, "params": {"object_name": entity_clean, "query": text}}
 
         # 7.6. Multi-Person Awareness Queries (SG CUBE 2.5 Feature 7)
         # A. People Behind Query (Limitation Aware)
@@ -342,15 +360,21 @@ class CommandRouter:
             if cand_name and cand_name not in ["it", "that", "this", "them", "there", "everyone", "people"]:
                 return {"intent": "PERSON_LOCATION_QUERY", "target": cand_name.title(), "params": {"name": cand_name.title(), "target_person": cand_name.title()}}
 
-        # 8. Explicit Location Recall ("Where did I say my laptop is?", "Where is my laptop?", "Where did I put my keys?")
-        where_match = re.search(r'where\s+(?:did\s+i\s+say\s+|did\s+i\s+put\s+|did\s+i\s+keep\s+|is\s+|are\s+)(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
+        # 8. Explicit Location Recall vs Object Search
+        # Explicit memory recall ("Where did I say my laptop is?", "Where did I put my keys?", "Where did I keep my keys?")
+        where_mem_match = re.search(r'where\s+(?:did\s+i\s+say\s+|did\s+i\s+put\s+|did\s+i\s+keep\s+)(?:my\s+|the\s+)?([a-zA-Z0-9_\s]+)', clean_text)
+        if where_mem_match and not any(w in clean_text for w in ["who", "read", "money", "person", "people", "persons", "everyone", "face", "around me", "in front of me"]):
+            entity_str = where_mem_match.group(1).strip().rstrip("? .!")
+            entity_clean = re.sub(r'\s+(?:is|are|located|kept|stored)$', '', entity_str).strip()
+            return {"intent": "MEMORY_RECALL", "target": f"{entity_clean} location", "params": {"query": f"{entity_clean} location", "entity": entity_clean, "category": "location"}}
+
+        # Explicit object search ("Where is my phone?", "Where is the bottle?", "Where are my keys?", "Where is my laptop?")
+        where_match = re.search(r'where\s+(?:is|are|\'s)\s+(?:my\s+|the\s+|a\s+)?([a-zA-Z0-9_\s]+)', clean_text)
         if where_match and not any(w in clean_text for w in ["who", "read", "money", "person", "people", "persons", "everyone", "face", "around me", "in front of me"]):
             entity_str = where_match.group(1).strip().rstrip("? .!")
             entity_clean = re.sub(r'\s+(?:is|are|located|kept|stored)$', '', entity_str).strip()
-            # If user explicitly asks "where is the <item>" without "my" or with "in front of me", prioritize object search
-            if clean_text.startswith("where is the ") or clean_text.startswith("where are the "):
+            if entity_clean and entity_clean not in ["it", "that", "this", "them", "there", "everyone", "people"]:
                 return {"intent": "OBJECT_SEARCH", "target": entity_clean, "params": {"object_name": entity_clean}}
-            return {"intent": "MEMORY_RECALL", "target": f"{entity_clean} location", "params": {"query": f"{entity_clean} location", "entity": entity_clean, "category": "location"}}
 
         # 9. Explicit & Contextual Memory Save ("Remember that my laptop is on the study table", "Remember my favorite color is blue", "Save this")
         is_save_cmd = (
@@ -497,7 +521,10 @@ class CommandRouter:
             return {"intent": "DOCUMENT_READ", "target": None, "params": {}}
 
         # 16. OCR / Text Reading Query (Fallback)
-        if any(p in clean_text for p in ["read this", "read the sign", "read text", "read label", "what does this say"]):
+        if any(p in clean_text for p in ["read the sign", "read text", "read label", "what does this say"]) or (
+            clean_text in ["read this", "read this out", "read this for me"] or
+            (clean_text.startswith("read this ") and not any(w in clean_text for w in ["chat", "screen", "message", "whatsapp", "doc", "receipt", "bill", "menu", "page", "form"]))
+        ):
             return {"intent": "OCR", "target": None, "params": {}}
 
         # 17. Environment / Scene Describe Query ("What do you see?", "Describe my surroundings", "What is around me?", "What is in front of me?")
@@ -550,13 +577,17 @@ class CommandRouter:
             return {"intent": "SLEEP", "target": None, "params": {}}
 
         # 25. Voice Security Commands (SG CUBE 2.5)
-        if any(p in clean_text for p in ["lock security", "lock session", "revoke security", "lock voice security", "lock my session"]):
+        if any(p in clean_text for p in [
+            "lock sensitive actions", "lock sensitive", "lock security", "lock session", "revoke security", "lock voice security", "lock my session"
+        ]):
             return {"intent": "SECURITY_LOCK", "target": None, "params": {}}
 
         if any(p in clean_text for p in [
+            "set sensitive password", "set my sensitive password", "set sensitive passphrase", "set sensitive phrase", "set sensitive word",
             "set my security word", "set security word", "set security password", "set voice security password",
-            "set security passphrase", "set my security password", "change security password", "change my security password",
-            "change voice security password", "change security word", "update security password"
+            "set security passphrase", "set my security password", "change sensitive password", "change my sensitive password",
+            "change security password", "change my security password",
+            "change voice security password", "change security word", "update sensitive password", "update security password"
         ]):
             return {"intent": "SECURITY_SET", "target": None, "params": {}}
 
@@ -585,23 +616,74 @@ class CommandRouter:
         ]):
             return {"intent": "AUTOMATION_STATUS", "target": None, "params": {}}
 
-        # C. Close Application ("Close calculator", "Exit notepad", "Quit calculator", "Close file explorer", "Close browser")
+        # C. Close Application ("Close calculator", "Exit notepad", "Quit calculator", "Close file explorer", "Close browser", "Close whatsapp")
         close_app_match = re.search(
-            r'^(?:please\s+)?(?:close|exit|quit|terminate|shut\s+down)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|file\s+explorer|explorer|files|browser|web\s+browser|chrome|edge|firefox)\b',
+            r'^(?:please\s+)?(?:close|exit|quit|terminate|shut\s+down)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|file\s+explorer|explorer|files|browser|web\s+browser|chrome|edge|firefox|whatsapp|whats\s+app)\b',
             clean_text
         )
         if close_app_match:
             app_t = close_app_match.group(1).strip()
+            if app_t in ["whats app", "whatsapp"]:
+                app_t = "whatsapp"
             return {"intent": "AUTOMATION_CLOSE_APP", "target": app_t, "params": {"app_name": app_t, "target": app_t}}
 
-        # D. Open Application ("Open calculator", "Launch notepad", "Start file explorer", "Open browser")
+        # D. Open Application ("Open calculator", "Launch notepad", "Start file explorer", "Open browser", "Open whatsapp")
         open_app_match = re.search(
-            r'^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|text\s+editor|file\s+explorer|explorer|browser|web\s+browser|chrome|edge|firefox)\b',
+            r'^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:app\s+|application\s+)?(calculator|calc|notepad|text\s+editor|file\s+explorer|explorer|browser|web\s+browser|chrome|edge|firefox|whatsapp|whats\s+app)\b',
             clean_text
         )
         if open_app_match:
             app_t = open_app_match.group(1).strip()
+            if app_t in ["whats app", "whatsapp"]:
+                app_t = "whatsapp"
             return {"intent": "AUTOMATION_OPEN_APP", "target": app_t, "params": {"app_name": app_t, "target": app_t}}
+
+        # D.1. Read Screen / Active Window Content ("Read screen", "What is on my screen", "What do you see on my screen")
+        if any(p in clean_text for p in [
+            "read screen", "read the screen", "what is on my screen", "what is on the screen",
+            "what's on my screen", "what's on the screen", "read my screen", "what do you see on my screen",
+            "what is on screen", "read active window", "read content on screen", "what is showing on my screen"
+        ]):
+            return {"intent": "AUTOMATION_READ_SCREEN", "target": None, "params": {}}
+
+        # D.2. Read WhatsApp Messages / Chat ("Read this chat", "Read chat", "Read whatsapp", "What messages do I have")
+        if any(p in clean_text for p in [
+            "read this chat", "read chat", "read whatsapp", "read my messages", "read messages",
+            "what messages do i have", "check whatsapp", "read whatsapp messages", "read incoming messages"
+        ]):
+            return {"intent": "AUTOMATION_READ_CHAT", "target": "whatsapp", "params": {"app": "whatsapp"}}
+
+        # D.3. Open Specific Chat with Contact ("Open chat with Mom", "Open whatsapp chat with Alex", "Chat with John")
+        open_chat_match = re.search(r'^(?:please\s+)?(?:open\s+(?:whatsapp\s+)?chat\s+with|open\s+chat\s+with|chat\s+with)\s+([a-zA-Z0-9_\s]+)$', clean_text)
+        if open_chat_match:
+            c_name = open_chat_match.group(1).strip()
+            return {"intent": "AUTOMATION_OPEN_CHAT", "target": c_name.title(), "params": {"contact": c_name.title(), "app": "whatsapp"}}
+
+        # D.4. Send Message to Contact ("Send I will be late to Mom", "Send message to Mom saying I will be late", "Message Alex hello")
+        send_msg_match = re.search(
+            r'^(?:please\s+)?(?:send\s+(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?to\s+([a-zA-Z0-9_\s]+?)\s+saying\s+(.+)|send\s+(.+?)\s+to\s+([a-zA-Z0-9_\s]+)|message\s+([a-zA-Z0-9_\s]+?)\s+(?:saying\s+)?(.+))$',
+            text.strip(),
+            re.IGNORECASE
+        )
+        if send_msg_match and not any(w in clean_text for w in ["money", "password", "code", "task", "reminder"]):
+            if send_msg_match.group(1) and send_msg_match.group(2):
+                c_target = send_msg_match.group(1).strip().title()
+                m_body = send_msg_match.group(2).strip()
+            elif send_msg_match.group(3) and send_msg_match.group(4):
+                c_target = send_msg_match.group(4).strip().title()
+                m_body = send_msg_match.group(3).strip()
+            elif send_msg_match.group(5) and send_msg_match.group(6):
+                c_target = send_msg_match.group(5).strip().title()
+                m_body = send_msg_match.group(6).strip()
+            else:
+                c_target, m_body = None, None
+
+            if c_target and m_body:
+                return {
+                    "intent": "AUTOMATION_SEND_MESSAGE",
+                    "target": c_target,
+                    "params": {"contact": c_target, "message": m_body, "app": "whatsapp"}
+                }
 
         # E. Open URL / Website ("Open website google.com", "Open url wikipedia.org", "Go to github.com", "Open site youtube.com")
         open_url_match = re.search(

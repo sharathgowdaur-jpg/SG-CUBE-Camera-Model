@@ -317,12 +317,9 @@ class SecurityManager:
         """ Increments failed attempts and enforces progressive lockout """
         self._failed_attempts += 1
         now = time.time()
-        if self._failed_attempts == 1:
+        if self._failed_attempts in (1, 2):
             lockout = 0
-            msg = "Authorization failed. Please try again."
-        elif self._failed_attempts == 2:
-            lockout = 0
-            msg = "Authorization failed."
+            msg = "Password incorrect."
         elif self._failed_attempts == 3:
             lockout = 30
             self._locked_until = now + 30
@@ -361,7 +358,7 @@ class SecurityManager:
         ok = self._verify_against_record(norm, self._cached_verifier)
         if ok:
             self.authorize_session(self._session_ttl_seconds)
-            return True, "Authorization successful."
+            return True, "Password verified."
         else:
             msg, _ = self._record_failure()
             return False, msg
@@ -394,7 +391,7 @@ class SecurityManager:
             self._cached_recovery = rec_verifier
             self.mark_onboarding_completed(True)
             self.authorize_session(self._session_ttl_seconds)
-            return True, "Voice security password set successfully.", raw_recovery_code
+            return True, "Sensitive password set successfully.", raw_recovery_code
         else:
             return False, "Failed to save security verifier to secure storage.", None
 
@@ -420,7 +417,7 @@ class SecurityManager:
             self._cached_verifier = new_verifier
             self.lock_session()
             self.authorize_session(self._session_ttl_seconds)
-            return True, "Your Voice Security Password has been changed."
+            return True, "Your sensitive password has been changed."
         return False, "Failed to update security verifier."
 
     def reset_with_recovery_code(self, recovery_code: str, new_phrase: str) -> Tuple[bool, str, Optional[str]]:
@@ -570,7 +567,7 @@ class SecurityManager:
             self.current_state = SecurityState.ENROLL_AWAIT_REPEAT
             return {
                 "handled": True,
-                "spoken_response": "Please repeat your security password.",
+                "spoken_response": "Please repeat your password.",
                 "action": "AWAIT_REPEAT"
             }
 
@@ -607,7 +604,7 @@ class SecurityManager:
             self.current_state = SecurityState.CHANGE_AWAIT_NEW
             return {
                 "handled": True,
-                "spoken_response": "Current password verified. Please say your new security password.",
+                "spoken_response": "Current password verified. Please say your new password.",
                 "action": "AWAIT_NEW"
             }
 
@@ -622,7 +619,7 @@ class SecurityManager:
             self.current_state = SecurityState.CHANGE_AWAIT_REPEAT
             return {
                 "handled": True,
-                "spoken_response": "Please repeat your new security password.",
+                "spoken_response": "Please repeat your new password.",
                 "action": "AWAIT_REPEAT"
             }
 
@@ -636,7 +633,7 @@ class SecurityManager:
                 self.authorize_session(self._session_ttl_seconds)
                 return {
                     "handled": True,
-                    "spoken_response": "Your Voice Security Password has been changed." if ok else "Failed to save password.",
+                    "spoken_response": "Your sensitive password has been changed." if ok else "Failed to save password.",
                     "action": "CHANGE_SUCCESS" if ok else "CHANGE_FAILED"
                 }
             else:
@@ -718,7 +715,7 @@ class SecurityManager:
 
             return {
                 "handled": True,
-                "spoken_response": "Authorization successful.",
+                "spoken_response": "Password verified.",
                 "action": "EXECUTE_PENDING",
                 "pending_action": pending
             }
@@ -730,13 +727,13 @@ class SecurityManager:
         self.current_state = SecurityState.CHALLENGE_AWAIT_PHRASE
         self._pending_action = pending_action
         self._pending_action_time = time.time()
-        return "This is a protected action. Please say your security password."
+        return "This is a protected action. Please say your sensitive password."
 
     def start_enrollment(self) -> str:
         """ Starts interactive voice enrollment """
         self.current_state = SecurityState.ENROLL_AWAIT_PHRASE
         self._temp_phrase_buffer = None
-        return "Let's set your Voice Security Password. Please say your security password now."
+        return "Let's set your sensitive password. Please say your new password."
 
     def start_change(self) -> str:
         """ Starts interactive voice change """
@@ -744,7 +741,7 @@ class SecurityManager:
             return self.start_enrollment()
         self.current_state = SecurityState.CHANGE_AWAIT_CURRENT
         self._temp_phrase_buffer = None
-        return "Please say your current security password."
+        return "Please say your current sensitive password."
 
     def start_remove(self) -> str:
         """ Starts interactive voice removal """

@@ -95,7 +95,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
     def test_09_interactive_enrollment_success(self):
         prompt1 = self.sec.start_enrollment()
         self.assertEqual(self.sec.current_state, SecurityState.ENROLL_AWAIT_PHRASE)
-        self.assertIn("say your security password", prompt1)
+        self.assertIn("sensitive password", prompt1.lower())
 
         res1 = self.sec.handle_speech_input("mango seven river")
         self.assertTrue(res1["handled"])
@@ -125,7 +125,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
         ok, msg = self.sec.verify_password("mango seven river")
         self.assertTrue(ok)
-        self.assertIn("successful", msg.lower())
+        self.assertIn("verified", msg.lower())
         self.assertTrue(self.sec.is_session_authorized())
 
     def test_12_incorrect_password_verification(self):
@@ -134,7 +134,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
         ok, msg = self.sec.verify_password("wrong password phrase")
         self.assertFalse(ok)
-        self.assertIn("failed", msg.lower())
+        self.assertIn("incorrect", msg.lower())
         self.assertFalse(self.sec.is_session_authorized())
 
     def test_13_authorization_session_expiration(self):
@@ -216,7 +216,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         self.sec.set_password("mango seven river")
         ok, msg = self.sec.change_password("incorrect current", "forest green sky")
         self.assertFalse(ok)
-        self.assertIn("failed", msg.lower())
+        self.assertIn("incorrect", msg.lower())
 
     # 7. Reset Password with Recovery Code
     def test_19_reset_password_success_with_recovery_code(self):
@@ -240,7 +240,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         self.sec.set_password("mango seven river")
         ok_rst, msg_rst, _ = self.sec.reset_with_recovery_code("RC-0000-0000", "new phrase")
         self.assertFalse(ok_rst)
-        self.assertIn("failed", msg_rst.lower())
+        self.assertIn("incorrect", msg_rst.lower())
 
     # 8. Remove Password Protection
     def test_21_remove_password_success(self):
@@ -340,7 +340,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         # Protected command: list all memories
         resp = engine.process_user_speech_query("show my memories")
         self.assertIn("protected", resp.lower())
-        self.assertIn("security password", resp.lower())
+        self.assertIn("sensitive password", resp.lower())
         self.assertEqual(engine.security.current_state, SecurityState.CHALLENGE_AWAIT_PHRASE)
 
     def test_30_engine_challenge_pass_and_executes_pending(self):
@@ -355,7 +355,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
         # Answer challenge with correct password
         resp = engine.process_user_speech_query("mango seven river")
-        self.assertIn("Authorization successful", resp)
+        self.assertIn("Password verified", resp)
         self.assertIn("favorite color", resp.lower())
         self.assertTrue(engine.security.is_session_authorized())
 
@@ -370,7 +370,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
         # Answer challenge with incorrect password
         resp = engine.process_user_speech_query("wrong phrase")
-        self.assertIn("failed", resp.lower())
+        self.assertIn("incorrect", resp.lower())
         self.assertFalse(engine.security.is_session_authorized())
 
     def test_32_engine_lock_command_revokes_session(self):
@@ -379,7 +379,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         engine.security.authorize_session(60.0)
         self.assertTrue(engine.security.is_session_authorized())
 
-        resp = engine.process_user_speech_query("lock security")
+        resp = engine.process_user_speech_query("lock sensitive actions")
         self.assertIn("locked", resp.lower())
         self.assertFalse(engine.security.is_session_authorized())
 
@@ -417,7 +417,87 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         # (proving knowledge factor model)
         ok, msg = self.sec.verify_password("mango seven river")
         self.assertTrue(ok)
-        self.assertIn("successful", msg.lower())
+        self.assertIn("verified", msg.lower())
+
+    # 13. Comprehensive Voice Security User Stories (Features 1 & 7)
+    def test_36_first_time_set_sensitive_password_dialog(self):
+        engine = VisionEngine(data_dir=self.test_dir)
+        self.assertFalse(engine.security.is_configured())
+
+        # Step 1: Say "set sensitive password"
+        r1 = engine.process_user_speech_query("set sensitive password")
+        self.assertIn("Let's set your sensitive password", r1)
+        self.assertEqual(engine.security.current_state, SecurityState.ENROLL_AWAIT_PHRASE)
+
+        # Step 2: User says new password
+        r2 = engine.process_user_speech_query("silver river moon")
+        self.assertIn("repeat your password", r2.lower())
+        self.assertEqual(engine.security.current_state, SecurityState.ENROLL_AWAIT_REPEAT)
+
+        # Step 3: User repeats password
+        r3 = engine.process_user_speech_query("silver river moon")
+        self.assertIn("successfully", r3.lower())
+        self.assertEqual(engine.security.current_state, SecurityState.IDLE)
+        self.assertTrue(engine.security.is_configured())
+        self.assertTrue(engine.security.is_session_authorized())
+
+    def test_37_change_existing_sensitive_password_dialog(self):
+        engine = VisionEngine(data_dir=self.test_dir)
+        engine.security.set_password("silver river moon")
+        engine.security.lock_session()
+
+        # Step 1: Say "change sensitive password"
+        r1 = engine.process_user_speech_query("change sensitive password")
+        self.assertIn("current sensitive password", r1.lower())
+        self.assertEqual(engine.security.current_state, SecurityState.CHANGE_AWAIT_CURRENT)
+
+        # Step 2: Say current password
+        r2 = engine.process_user_speech_query("silver river moon")
+        self.assertIn("Current password verified", r2)
+        self.assertEqual(engine.security.current_state, SecurityState.CHANGE_AWAIT_NEW)
+
+        # Step 3: Say new password
+        r3 = engine.process_user_speech_query("golden eagle flight")
+        self.assertIn("repeat your new password", r3.lower())
+        self.assertEqual(engine.security.current_state, SecurityState.CHANGE_AWAIT_REPEAT)
+
+        # Step 4: Repeat new password
+        r4 = engine.process_user_speech_query("golden eagle flight")
+        self.assertIn("changed", r4.lower())
+        self.assertEqual(engine.security.current_state, SecurityState.IDLE)
+
+    def test_38_protected_action_password_challenge_and_execution(self):
+        engine = VisionEngine(data_dir=self.test_dir)
+        engine.security.set_password("silver river moon")
+        engine.security.lock_session()
+        engine.memory.save_memory("personal", "phone location", "Your phone is on the dining table.")
+
+        # Protected action: forget memory
+        r1 = engine.process_user_speech_query("forget my phone location")
+        self.assertIn("This is a protected action", r1)
+        self.assertIn("sensitive password", r1.lower())
+
+        # Correct password
+        r2 = engine.process_user_speech_query("silver river moon")
+        self.assertIn("Password verified", r2)
+        self.assertIn("deleted that memory", r2.lower())
+
+    def test_39_protected_action_wrong_password_blocks_execution(self):
+        engine = VisionEngine(data_dir=self.test_dir)
+        engine.security.set_password("silver river moon")
+        engine.security.lock_session()
+        engine.memory.save_memory("personal", "phone location", "Your phone is on the dining table.")
+
+        # Protected action: forget memory
+        r1 = engine.process_user_speech_query("forget my phone location")
+        self.assertIn("This is a protected action", r1)
+
+        # Wrong password
+        r2 = engine.process_user_speech_query("wrong password phrase")
+        self.assertIn("incorrect", r2.lower())
+        # Memory must NOT be deleted
+        recalled = engine.memory.recall_memory("phone location", category="location")
+        self.assertIsNotNone(recalled)
 
 if __name__ == "__main__":
     unittest.main()

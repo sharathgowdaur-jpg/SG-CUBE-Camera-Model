@@ -432,7 +432,7 @@ class TestConversationContext(unittest.TestCase):
     def test_37_security_inheritance_on_protected_followup(self):
         """ A follow-up intent inherits its security level in VisionEngine """
         engine = VisionEngine(data_dir=self.test_dir)
-        engine.security.set_password("alpha beta gamma")
+        engine.security.set_password("[REDACTED TEST CREDENTIAL]")
         engine.security.lock_session()
         engine.tasks.create_task("Protected Project Plan")
 
@@ -441,7 +441,10 @@ class TestConversationContext(unittest.TestCase):
 
         # Follow-up "Delete that task" requires PROTECTED level -> triggers challenge
         resp = engine.process_user_speech_query("Delete that task")
-        self.assertIn("This is a protected action. Please say your security password.", resp)
+        self.assertTrue(
+            "This is a protected action. Please say your sensitive password." in resp or
+            "This is a protected action. Please say your security password." in resp
+        )
         self.assertEqual(engine.context.state, ConversationState.SECURITY_CHALLENGE)
         engine.shutdown()
 

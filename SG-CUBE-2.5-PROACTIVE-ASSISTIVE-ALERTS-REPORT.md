@@ -49,13 +49,13 @@ Measured across **10,000 real iterations** using `time.perf_counter_ns()` with t
 ### Full Subsystem Regression Suite:
 - **673 / 673 PASS** (0 failures, 0 errors in 114.44s)
 - Features Verified:
-  - Feature 1: Voice Security Password & 2FA
-  - Feature 2: Voice Multi-Sample Enrollment & SFace Recognition
-  - Feature 3: Smart Object Finder & Spatial Memory
-  - Feature 4: Scene Understanding & Structured 2D Perception
-  - Feature 5: Task & Reminder Assistant
-  - Feature 6: Continuous Conversation Context Engine
-  - Feature 7: Multi-Person Awareness & Tracking
+  - Feature 1: Voice Security
+  - Feature 2: Context-Aware Personal Memory
+  - Feature 3: Scene Understanding
+  - Feature 4: Lost-Item Finder
+  - Feature 5: Tasks & Reminders
+  - Feature 6: Continuous Conversation Context
+  - Feature 7: Multi-Person Awareness
   - Feature 8: Intelligent Document Understanding
   - Feature 9: Permission-Based System Automation
   - Feature 10: Proactive Assistive Alerts
