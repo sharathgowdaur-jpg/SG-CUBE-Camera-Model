@@ -17,9 +17,11 @@ from .scene_analyzer import SceneAnalyzer
 from .environment_monitor import EnvironmentMonitor
 from .command_router import CommandRouter, OFFICIAL_INTRODUCTION
 from .response_manager import ResponseManager
-from .memory_manager import MemoryManager
+from .memory_manager import MemoryManager, is_credential_secret, is_sensitive_personal_info
 from .conversation_history import ConversationHistory
 from .api_key_manager import APIKeyManager
+from .secure_vault.secure_vault_controller import SecureVaultController
+from .secure_vault.sensitive_data_detector import SensitiveDataDetector
 from .color_detector import ColorDetector
 from .product_scanner import ProductScanner
 from .meta_glass import MetaGlassBridge
@@ -84,7 +86,7 @@ class VisionEngine:
     color detection, product scanning, Meta Glass bridge, intent routing, and response queuing.
     """
 
-    def __init__(self, data_dir: str = None):
+    def __init__(self, data_dir: str = None, per_request_auth: Optional[bool] = None):
         if data_dir is None or data_dir == "data":
             self.data_dir = DEFAULT_DATA_DIR
         else:
@@ -128,6 +130,19 @@ class VisionEngine:
         self.router = CommandRouter()
         self.response_manager = ResponseManager(announcement_cooldown=ann_cooldown)
         self.security = SecurityManager(pref_dir=self.store.pref_dir, store=self.store)
+        vault_dir = os.path.join(self.data_dir, "secure_vault")
+        os.makedirs(vault_dir, exist_ok=True)
+        self.vault = SecureVaultController(
+            db_path=os.path.join(vault_dir, "vault.db"),
+            verifier_file=os.path.join(vault_dir, "vault_verifier.json")
+        )
+        if per_request_auth is not None:
+            self.per_request_auth = per_request_auth
+        else:
+            self.per_request_auth = os.environ.get("SGCUBE_PER_REQUEST_AUTH", "0") == "1"
+
+        if self.per_request_auth:
+            self.vault.enable_per_request_auth()
 
         # Permission-Based System Automation Engine (SG CUBE 2.5 Feature 9)
         self.automation = AutomationManager(pref_dir=self.store.pref_dir, security_manager=self.security)
@@ -174,6 +189,18 @@ class VisionEngine:
         self.last_objects: List[Dict] = []
         self.last_scene = None
         self.active_mode: str = "ASSISTIVE"
+
+    def enable_per_request_auth(self):
+        """ Enables isolated per-request single-operation authorization mode """
+        self.per_request_auth = True
+        if hasattr(self, "vault"):
+            self.vault.enable_per_request_auth()
+
+    def disable_per_request_auth(self):
+        """ Disables per-request authorization mode """
+        self.per_request_auth = False
+        if hasattr(self, "vault"):
+            self.vault.disable_per_request_auth()
 
     def _on_reminder_triggered(self, task: TaskItem):
         """Dispatches voice announcement when a reminder becomes due."""
@@ -436,18 +463,30 @@ class VisionEngine:
                 if sec_res.get("action") == "EXECUTE_PENDING":
                     pending = sec_res.get("pending_action")
                     if pending:
-                        exec_res = self._execute_intent(
-                            pending["intent"],
-                            pending["route"],
-                            pending["transcript"],
-                            session_id=session_id
-                        )
+                        if self.per_request_auth:
+                            self.vault.authorize_one_operation(self.security)
+                        else:
+                            self.vault.sync_with_security_manager(self.security)
+                        try:
+                            exec_res = self._execute_intent(
+                                pending["intent"],
+                                pending["route"],
+                                pending["transcript"],
+                                session_id=session_id
+                            )
+                        finally:
+                            if self.per_request_auth:
+                                self.vault.consume_authorization()
                         if exec_res:
                             resp_text = f"Password verified. Proceeding. {exec_res}"
                         else:
                             resp_text = "Password verified. Proceeding."
+                if self.security.current_state == SecurityState.IDLE:
+                    self.context.state = ConversationState.IDLE
                 self.response_manager.add_response(resp_text, priority=2, force=True)
                 return resp_text
+        elif self.context.state == ConversationState.SECURITY_CHALLENGE and self.security.current_state == SecurityState.IDLE:
+            self.context.state = ConversationState.IDLE
 
         # 2. Continuous Conversation Context & Follow-up Intent Resolution (Feature 6 & 7)
         followup = self.context.resolve_followup_intent(
@@ -557,17 +596,28 @@ class VisionEngine:
                 intent = followup["intent"]
 
         # 3. Voice Security Specific Commands
-        if intent == "SECURITY_LOCK":
+        if intent in ("SECURITY_LOCK", "VAULT_LOCK"):
             self.security.lock_session()
-            resp = "Security session locked."
+            self.vault.lock()
+            resp = "Security session locked. Secure memory locked."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
         elif intent == "SECURITY_SET":
             if self.security.is_configured():
+                resp = "A password is already configured. Use change password to update it."
+            else:
+                self.context.state = ConversationState.SECURITY_CHALLENGE
+                resp = self.security.start_enrollment()
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SECURITY_CHANGE":
+            if self.security.is_configured():
+                self.context.state = ConversationState.SECURITY_CHALLENGE
                 resp = self.security.start_change()
             else:
-                resp = self.security.start_enrollment()
+                resp = "No sensitive password has been set. Say set password to create one."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
@@ -577,6 +627,7 @@ class VisionEngine:
             return resp
 
         elif intent == "SECURITY_REMOVE":
+            self.context.state = ConversationState.SECURITY_CHALLENGE
             resp = self.security.start_remove()
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
@@ -597,17 +648,68 @@ class VisionEngine:
 
         # 4. Central Security Policy Gate (PROTECTED / HIGH_RISK)
         level = self.security.get_security_level(intent)
-        if level in (SecurityLevel.PROTECTED, SecurityLevel.HIGH_RISK) and self.security.is_configured():
-            if not self.security.is_session_authorized():
-                self.context.state = ConversationState.SECURITY_CHALLENGE
-                challenge_msg = self.security.start_challenge({
-                    "intent": intent,
-                    "route": route,
-                    "transcript": user_transcript,
-                    "level": level
-                })
-                self.response_manager.add_response(challenge_msg, priority=2, force=True)
-                return challenge_msg
+        is_sensitive_req = False
+        if intent in ("MEMORY_RECALL", "VAULT_RECALL"):
+            query = route.get("params", {}).get("query", user_transcript) if (route and route.get("params")) else user_transcript
+            is_sensitive_req = (
+                intent == "VAULT_RECALL"
+                or route.get("params", {}).get("is_protected", False)
+                or self.vault.record_exists_for_query(query)
+                or self.vault.is_sensitive(query)
+                or is_sensitive_personal_info(query)
+                or is_credential_secret(query)
+                or any(w in query.lower() for w in [
+                    "sensitive", "protected", "vault", "atm pin", "pin", "password",
+                    "bank", "account number", "confidential note", "ssn", "passport", "routing",
+                    "secret", "passcode", "code"
+                ])
+            )
+            if not is_sensitive_req:
+                level = SecurityLevel.SAFE
+            else:
+                level = SecurityLevel.PROTECTED
+
+        elif intent == "VAULT_SAVE":
+            level = SecurityLevel.PROTECTED
+            is_sensitive_req = True
+
+        elif intent == "MEMORY_FORGET":
+            raw_key = route.get("params", {}).get("key", "")
+            is_sensitive_req = (
+                self.vault.record_exists_for_query(raw_key)
+                or self.vault.is_sensitive(raw_key)
+                or is_sensitive_personal_info(raw_key)
+                or any(w in raw_key.lower() for w in ["sensitive", "protected", "vault", "pin", "password", "bank"])
+            )
+            level = SecurityLevel.PROTECTED
+
+        if level in (SecurityLevel.PROTECTED, SecurityLevel.HIGH_RISK):
+            if not self.security.is_configured():
+                if intent in ("VAULT_SAVE", "VAULT_RECALL") or (intent in ("MEMORY_RECALL", "MEMORY_SAVE") and is_sensitive_req):
+                    resp = "Voice security password is not configured. Please set your voice security password first."
+                    self.response_manager.add_response(resp, priority=2, force=True)
+                    return resp
+            else:
+                is_protected_mem = (
+                    intent in ("VAULT_SAVE", "VAULT_RECALL")
+                    or (intent in ("MEMORY_RECALL", "MEMORY_SAVE", "MEMORY_FORGET") and is_sensitive_req)
+                )
+                if self.per_request_auth and is_protected_mem:
+                    is_auth = self.vault.is_operation_authorized()
+                else:
+                    is_auth = self.security.is_session_authorized()
+
+                if not is_auth:
+                    self.context.state = ConversationState.SECURITY_CHALLENGE
+                    challenge_msg = self.security.start_challenge({
+                        "intent": intent,
+                        "route": route,
+                        "transcript": user_transcript,
+                        "level": level
+                    })
+                    challenge_msg = "This is a protected action and protected information. Please say your voice password or sensitive password."
+                    self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                    return challenge_msg
 
             # If authorized, check High-Risk 2FA (Voice + Live Face)
             if level == SecurityLevel.HIGH_RISK and self.security.is_face_2fa_required():
@@ -628,7 +730,7 @@ class VisionEngine:
         Executes the resolved intent logic.
         """
         # --- PERSISTENT LONG-TERM MEMORY INTENTS ---
-        if intent == "MEMORY_SAVE":
+        if intent in ("MEMORY_SAVE", "VAULT_SAVE"):
             raw_cmd = user_transcript
             norm_cmd = user_transcript.strip().lower()
             fact_str = route["params"].get("fact", "")
@@ -636,12 +738,12 @@ class VisionEngine:
 
             print(f"[SAVE] RAW COMMAND: '{raw_cmd}'")
             print(f"[SAVE] NORMALIZED COMMAND: '{norm_cmd}'")
-            print(f"[SAVE] INTENT: 'MEMORY_SAVE'")
+            print(f"[SAVE] INTENT: '{intent}'")
             print(f"[SAVE] KEY: '{key}'")
             print(f"[SAVE] FACT: '{fact_str}'")
             print(f"[SAVE] command received: '{raw_cmd}'")
-            print(f"[SAVE] intent detected: 'MEMORY_SAVE'")
-            print(f"[SAVE] memory handler started: 'MEMORY_SAVE'")
+            print(f"[SAVE] intent detected: '{intent}'")
+            print(f"[SAVE] memory handler started: '{intent}'")
 
             # Contextual resolution for "Save this", "Save this information", "Remember this"
             if not fact_str or key == "contextual":
@@ -660,8 +762,56 @@ class VisionEngine:
                         fact_str = f"Document text: {ocr_res['text']}"
 
             if fact_str:
-                if self.memory.is_sensitive_info(fact_str) or self.memory.is_sensitive_info(key):
-                    resp = "For security reasons, I cannot store passwords, API keys, or credit card details in personal memory."
+                is_vault_explicit = (intent == "VAULT_SAVE" or route.get("params", {}).get("is_protected", False))
+                is_secret = (
+                    is_vault_explicit
+                    or is_credential_secret(fact_str)
+                    or is_credential_secret(key)
+                )
+
+                if is_secret:
+                    if not self.security.is_configured():
+                        resp = "Voice security password is not configured. Please set your voice security password first."
+                        self.response_manager.add_response(resp, priority=2, force=True)
+                        return resp
+
+                    is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
+                    if not is_auth:
+                        challenge_msg = self.security.start_challenge({
+                            "intent": intent,
+                            "route": route,
+                            "transcript": user_transcript,
+                            "level": SecurityLevel.PROTECTED
+                        })
+                        challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                        self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                        return challenge_msg
+
+                    if not self.per_request_auth:
+                        self.vault.sync_with_security_manager(self.security)
+                    success = self.vault.save_secure_record(key, fact_str)
+                    if success:
+                        resp = "Protected information saved securely in the vault."
+                    else:
+                        resp = "I couldn't save that protected information."
+
+                elif is_sensitive_personal_info(fact_str) or is_sensitive_personal_info(key):
+                    is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
+                    if self.security.is_configured() and not is_auth:
+                        challenge_msg = self.security.start_challenge({
+                            "intent": "MEMORY_SAVE",
+                            "route": route,
+                            "transcript": user_transcript,
+                            "level": SecurityLevel.PROTECTED
+                        })
+                        self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                        return challenge_msg
+
+                    success = self.memory.save_sensitive_memory("personal", key, fact_str)
+                    if success:
+                        resp = "Sensitive information saved securely."
+                    else:
+                        resp = "I couldn't save that sensitive information."
                 else:
                     success = self.memory.save_memory("personal", key, fact_str)
                     if success:
@@ -679,14 +829,60 @@ class VisionEngine:
             print(f"[SAVE] completed")
             return resp
 
-        elif intent == "MEMORY_RECALL":
+        elif intent in ("MEMORY_RECALL", "VAULT_RECALL"):
             query = route["params"].get("query", user_transcript)
             category = route["params"].get("category")
-            recalled = self.memory.recall_memory(query, category=category)
-            if recalled:
-                resp = f"I remember that {recalled[0].lower() + recalled[1:]}" if not recalled.lower().startswith("i ") and not recalled.lower().startswith("my ") else f"{recalled}"
+
+            is_vault_query = (
+                intent == "VAULT_RECALL"
+                or route.get("params", {}).get("is_protected", False)
+                or self.vault.record_exists_for_query(query)
+                or "atm pin" in query.lower()
+                or "pin" in query.lower()
+                or "vault" in query.lower()
+                or "protected" in query.lower()
+                or "secret" in query.lower()
+                or "passcode" in query.lower()
+            )
+
+            is_sensitive_req = is_vault_query or is_sensitive_personal_info(query) or any(w in query.lower() for w in [
+                "sensitive", "bank", "account number", "confidential note", "ssn", "passport", "routing"
+            ])
+
+            if is_sensitive_req:
+                is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
+                if self.security.is_configured() and not is_auth:
+                    self.context.state = ConversationState.SECURITY_CHALLENGE
+                    challenge_msg = self.security.start_challenge({
+                        "intent": intent,
+                        "route": route,
+                        "transcript": user_transcript,
+                        "level": SecurityLevel.PROTECTED
+                    })
+                    challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                    self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                    return challenge_msg
+
+                # Active authorized session: check vault first, then fallback to sensitive memory
+                if not self.per_request_auth:
+                    self.vault.sync_with_security_manager(self.security)
+                recalled = self.vault.retrieve_secure_record_by_query(query)
+                if not recalled:
+                    recalled = self.memory.recall_sensitive_memory(query)
+                if not recalled:
+                    recalled = self.memory.recall_memory(query, category=category)
+
+                if recalled:
+                    resp = f"Here is your protected information: {recalled}"
+                else:
+                    resp = "I don't have a protected memory saved for that."
             else:
-                resp = "I don't have a specific memory saved for that."
+                recalled = self.memory.recall_memory(query, category=category)
+                if recalled:
+                    resp = f"I remember that {recalled[0].lower() + recalled[1:]}" if not recalled.lower().startswith("i ") and not recalled.lower().startswith("my ") else f"{recalled}"
+                else:
+                    resp = "I don't have a specific memory saved for that."
+
             entity = route["params"].get("entity")
             if entity:
                 self.context.set_active_object(name=entity, location_description=resp)
@@ -700,7 +896,30 @@ class VisionEngine:
         elif intent == "MEMORY_FORGET":
             raw_key = route["params"].get("key", "")
             key = raw_key.rstrip(".?! \t\n")
-            success = self.memory.forget_memory(key)
+            is_vault_rec = self.vault.record_exists_for_query(key)
+            is_sensitive_req = is_vault_rec or is_sensitive_personal_info(key) or any(w in key.lower() for w in ["sensitive", "protected", "vault", "pin", "password", "bank"])
+            if is_sensitive_req:
+                is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
+                if self.security.is_configured() and not is_auth:
+                    challenge_msg = self.security.start_challenge({
+                        "intent": "MEMORY_FORGET",
+                        "route": route,
+                        "transcript": user_transcript,
+                        "level": SecurityLevel.PROTECTED
+                    })
+                    challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                    self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                    return challenge_msg
+                if not self.per_request_auth:
+                    self.vault.sync_with_security_manager(self.security)
+                success = self.vault.delete_secure_record_by_query(key)
+                if not success:
+                    success = self.memory.forget_sensitive_memory(key)
+                if not success:
+                    success = self.memory.forget_memory(key)
+            else:
+                success = self.memory.forget_memory(key)
+
             if success:
                 resp = f"Got it. I have deleted that memory about {key}."
             else:
@@ -931,7 +1150,10 @@ class VisionEngine:
 
         elif intent in ("SCENE_DESCRIBE", "ENVIRONMENT"):
             resp = self.scene.answer_query(user_transcript, scene=self.last_scene)
-            self.response_manager.add_response(resp, priority=2, force=True)
+            if resp and "I don't have a visual scene available" in resp:
+                return None
+            if resp:
+                self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
         elif intent == "SCENE_QUERY_SURFACE":

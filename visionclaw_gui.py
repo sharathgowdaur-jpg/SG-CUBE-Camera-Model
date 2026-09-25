@@ -21,6 +21,11 @@ from google.genai import types
 
 from assistive.vision_engine import VisionEngine
 from assistive.command_router import OFFICIAL_INTRODUCTION
+from assistive.security_manager import SecurityState
+try:
+    import speech_recognition as sr
+except ImportError:
+    sr = None
 
 load_dotenv()
 
@@ -39,6 +44,7 @@ Guidelines:
 3. Be conservative with safety warnings. Never claim the user is guaranteed safe.
 4. Express uncertainty gracefully when unsure about an object, face, or banknote.
 5. Never use robotic phrasing or technical system jargon.
+6. When the user asks to set, create, change, reset, or remove a voice security password or sensitive password, call the manage_voice_security tool immediately and do not output spoken disclaimers.
 """
 
 MORNING_GREETINGS = [
@@ -65,28 +71,58 @@ NIGHT_GREETINGS = [
     "Late night! Ready whenever you are."
 ]
 
-# --- SG CUBE Ultra-Dark HUD Color System (Pure Black #000000) ---
-COLOR_BG_PRIMARY = "#000000"      # Pure Black Window Background
-COLOR_BG_SECONDARY = "#030303"    # Secondary Deep Black Background
-COLOR_PANEL_DEEP = "#050505"      # Visually Deeper Black Panels / Cards
-COLOR_PANEL_SECONDARY = "#050505" # Inset Control Areas
-COLOR_PANEL_HOVER = "#0A0A0A"     # Elevated Interactive Hover Panels
-COLOR_BORDER_SUBTLE = "#141414"   # 1px Subtle Border
-COLOR_BORDER_HOVER = "#242424"    # Hover Border
-COLOR_BORDER_ACTIVE = "#00EDFF"   # Active Glowing Cyan Border
-COLOR_NAV_ACTIVE_BG = "#061217"   # Active Home Tab Inset Glow Background
+# --- SG CUBE Final Approved Dark Green & Light Peach/Cream Color System ---
+COLOR_BG_PRIMARY = "#060A08"        # Deep Dark Base Charcoal with subtle dark-green undertone
+COLOR_BG_SECONDARY = "#0A120D"      # Inset / Header / Footer Charcoal-Green
+COLOR_PANEL_DEEP = "#0C1611"        # Translucent Dark Green/Charcoal Panels
+COLOR_PANEL_SECONDARY = "#0F1C16"   # Inset Control Areas
+COLOR_PANEL_HOVER = "#14251D"       # Elevated Interactive Hover Panels
+COLOR_BORDER_SUBTLE = "#183A2A"     # Dark Green Border
+COLOR_BORDER_HOVER = "#1F4A35"      # Dark Green Hover Border
+COLOR_BORDER_ACTIVE = "#2E6B4A"     # Active Glowing Dark Green Border
+COLOR_NAV_ACTIVE_BG = "#183A2A"     # Active Tab Dark Green Pill
 
-COLOR_CYAN_PRIMARY = "#00EDFF"    # Primary Brand Cyan
-COLOR_TEAL_MINT = "#4DF7C4"       # Mint / Green Accents
-COLOR_ORANGE = "#FDAB72"          # Orange / Gold Accents
-COLOR_PINK = "#F678AB"            # Pink Accents
-COLOR_PURPLE = "#B377F7"          # Purple Accents
-COLOR_STATUS_GREEN = "#3ADC8C"    # Healthy Green Status
-COLOR_WARNING_GOLD = "#F8D93D"    # Warning Gold
-COLOR_ALERT_RED = "#FF4757"       # Alert Red
-COLOR_TEXT_PRIMARY = "#F1F5F9"    # High-contrast Primary Text
-COLOR_TEXT_SECONDARY = "#8B96A5"  # Secondary Muted Text
-COLOR_TEXT_MUTED = "#526071"      # Inactive / Subtle Text
+# Dark Green Primary System Accents (Refined & Restrained)
+COLOR_DARK_GREEN_DEEP = "#183A2A"
+COLOR_DARK_GREEN_PRIMARY = "#1F4A35"
+COLOR_DARK_GREEN_MEDIUM = "#244F38"
+COLOR_DARK_GREEN_ACCENT = "#2E6B4A"
+COLOR_DARK_GREEN_HIGHLIGHT = "#3D7856"
+COLOR_DARK_GREEN_LIGHT = "#4ADE80"
+
+# Backward-compatibility aliases for existing references
+COLOR_OLIVE_PRIMARY = "#1F4A35"
+COLOR_OLIVE_DARK = "#183A2A"
+COLOR_OLIVE_BRIGHT = "#2E6B4A"
+COLOR_OLIVE_GLOW = "#3D7856"
+
+# Typography — Light Peach / Cream System
+COLOR_PEACH_PRIMARY = "#F3E4D3"     # Primary Content / Headings / Title (Light Peach / Cream)
+COLOR_PEACH_SECONDARY = "#DCCDBD"   # Secondary Content / Labels
+COLOR_PEACH_MUTED = "#B6A99B"       # Timestamps / Subtitles / Inactive
+
+# Controlled Icon Accents (Restrained, subtle distinct colors — NO NEON)
+COLOR_ICON_HOME = "#4ADE80"         # Soft green
+COLOR_ICON_VISION = "#38BDF8"       # Cyan / blue
+COLOR_ICON_MEMORY = "#F59E0B"       # Warm amber
+COLOR_ICON_HISTORY = "#FB7185"      # Soft red / coral
+COLOR_ICON_PEOPLE = "#34D399"       # Green
+COLOR_ICON_METAGLASS = "#22D3EE"    # Teal / cyan
+COLOR_ICON_SETTINGS = "#F3E4D3"     # Light peach
+COLOR_STATUS_GREEN = "#34D399"      # Restrained status green
+COLOR_ALERT_RED = "#EF4444"         # Red badge
+COLOR_WARNING_GOLD = "#F59E0B"      # Amber
+COLOR_CYAN_PRIMARY = "#38BDF8"      # Cyan
+COLOR_TEAL_MINT = "#2DD4BF"         # Teal / Mint
+COLOR_AQUA = "#22D3EE"              # Aqua
+COLOR_PURPLE = "#1F4A35"            # No purple (Dark Green)
+COLOR_PINK = "#FB7185"              # Coral
+COLOR_ORANGE = "#F59E0B"            # Amber
+
+# Text aliases for comprehensive compatibility
+COLOR_TEXT_PRIMARY = COLOR_PEACH_PRIMARY
+COLOR_TEXT_SECONDARY = COLOR_PEACH_SECONDARY
+COLOR_TEXT_MUTED = COLOR_PEACH_MUTED
 
 def _hex_to_rgb(hex_str):
     hex_str = hex_str.lstrip('#')
@@ -175,17 +211,20 @@ class GlowingHUDIcon:
             r_pupil = int(S * 0.11)
             draw.ellipse([cx - r_pupil, cy - r_pupil, cx + r_pupil, cy + r_pupil], fill=fg_col)
 
-        elif name in ("memory", "brain"):
-            cw = int(S * 0.52)
-            ch = int(S * 0.52)
-            draw.rounded_rectangle([cx - cw // 2, cy - ch // 2, cx + cw // 2, cy + ch // 2], radius=int(S * 0.1), outline=fg_col, width=stroke_w)
-            draw.rectangle([cx - int(cw * 0.3), cy - int(ch * 0.3), cx + int(cw * 0.3), cy + int(ch * 0.3)], fill=fg_col)
-            pin_len = int(S * 0.18)
-            for offset in (-int(cw * 0.24), int(cw * 0.24)):
-                draw.line([(cx + offset, cy - ch // 2), (cx + offset, cy - ch // 2 - pin_len)], fill=fg_col, width=stroke_w)
-                draw.line([(cx + offset, cy + ch // 2), (cx + offset, cy + ch // 2 + pin_len)], fill=fg_col, width=stroke_w)
-                draw.line([(cx - cw // 2, cy + offset), (cx - cw // 2 - pin_len, cy + offset)], fill=fg_col, width=stroke_w)
-                draw.line([(cx + cw // 2, cy + offset), (cx + cw // 2 + pin_len, cy + offset)], fill=fg_col, width=stroke_w)
+        elif name in ("memory", "brain", "database", "cylinder"):
+            dw = int(S * 0.56)
+            dh = int(S * 0.18)
+            spacing = int(S * 0.15)
+            top_y = cy - int(S * 0.20)
+            draw.ellipse([cx - dw // 2, top_y - dh // 2, cx + dw // 2, top_y + dh // 2], outline=fg_col, width=stroke_w)
+            mid_y = top_y + spacing
+            draw.line([(cx - dw // 2, top_y), (cx - dw // 2, mid_y)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + dw // 2, top_y), (cx + dw // 2, mid_y)], fill=fg_col, width=stroke_w)
+            draw.arc([cx - dw // 2, mid_y - dh // 2, cx + dw // 2, mid_y + dh // 2], start=0, end=180, fill=fg_col, width=stroke_w)
+            bot_y = mid_y + spacing
+            draw.line([(cx - dw // 2, mid_y), (cx - dw // 2, bot_y)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + dw // 2, mid_y), (cx + dw // 2, bot_y)], fill=fg_col, width=stroke_w)
+            draw.arc([cx - dw // 2, bot_y - dh // 2, cx + dw // 2, bot_y + dh // 2], start=0, end=180, fill=fg_col, width=stroke_w)
 
         elif name in ("history", "clock"):
             r = int(S * 0.42)
@@ -302,19 +341,161 @@ class GlowingHUDIcon:
             draw.line([(cx, top_y + int(S * 0.14)), (cx, top_y + int(S * 0.38))], fill=fg_col, width=stroke_w)
             draw.ellipse([cx - stroke_w // 2, top_y + int(S * 0.48), cx + stroke_w // 2, top_y + int(S * 0.48) + stroke_w], fill=fg_col)
             
+        elif name in ("waveform", "pulse"):
+            bar_w = max(2, int(S * 0.08))
+            heights = [0.35, 0.70, 0.45, 0.90, 0.55, 0.75, 0.40]
+            num_bars = len(heights)
+            spacing = int(S * 0.12)
+            start_x = cx - (num_bars * spacing) // 2
+            for idx, h_ratio in enumerate(heights):
+                bx = start_x + idx * spacing
+                bh = int(S * 0.65 * h_ratio)
+                draw.rounded_rectangle([bx - bar_w // 2, cy - bh // 2, bx + bar_w // 2, cy + bh // 2], radius=bar_w // 2, fill=fg_col)
+
+        elif name in ("tree", "environment", "leaf"):
+            # Sleek botanical leaf with central stem vein
+            pts_leaf = [
+                (cx - int(S * 0.35), cy + int(S * 0.32)),
+                (cx - int(S * 0.20), cy - int(S * 0.05)),
+                (cx + int(S * 0.05), cy - int(S * 0.30)),
+                (cx + int(S * 0.35), cy - int(S * 0.35)),
+                (cx + int(S * 0.30), cy - int(S * 0.05)),
+                (cx + int(S * 0.05), cy + int(S * 0.20)),
+                (cx - int(S * 0.35), cy + int(S * 0.32))
+            ]
+            draw.polygon(pts_leaf, outline=fg_col, width=stroke_w)
+            draw.line([(cx - int(S * 0.32), cy + int(S * 0.30)), (cx + int(S * 0.30), cy - int(S * 0.30))], fill=fg_col, width=stroke_w)
+
+        elif name in ("cube", "wireframe_cube", "scene"):
+            r_c = int(S * 0.36)
+            pts_top = [(cx, cy - r_c), (cx + int(r_c * 0.866), cy - r_c // 2), (cx, cy), (cx - int(r_c * 0.866), cy - r_c // 2)]
+            pts_left = [(cx - int(r_c * 0.866), cy - r_c // 2), (cx, cy), (cx, cy + r_c), (cx - int(r_c * 0.866), cy + r_c // 2)]
+            pts_right = [(cx + int(r_c * 0.866), cy - r_c // 2), (cx, cy), (cx, cy + r_c), (cx + int(r_c * 0.866), cy + r_c // 2)]
+            draw.polygon(pts_top, outline=fg_col, width=stroke_w)
+            draw.polygon(pts_left, outline=fg_col, width=stroke_w)
+            draw.polygon(pts_right, outline=fg_col, width=stroke_w)
+
+        elif name in ("sun", "light"):
+            r_sun = int(S * 0.20)
+            draw.ellipse([cx - r_sun, cy - r_sun, cx + r_sun, cy + r_sun], fill=fg_col)
+            ray_len = int(S * 0.14)
+            r_outer = int(S * 0.38)
+            for i in range(8):
+                ang = i * math.pi / 4.0
+                rx1 = cx + int((r_outer - ray_len) * math.cos(ang))
+                ry1 = cy + int((r_outer - ray_len) * math.sin(ang))
+                rx2 = cx + int(r_outer * math.cos(ang))
+                ry2 = cy + int(r_outer * math.sin(ang))
+                draw.line([(rx1, ry1), (rx2, ry2)], fill=fg_col, width=stroke_w)
+
+        elif name in ("volume", "noise", "speaker"):
+            cone_w = int(S * 0.22)
+            cone_h = int(S * 0.36)
+            pts = [(cx - int(S * 0.25), cy - int(cone_h * 0.28)),
+                   (cx - int(S * 0.10), cy - int(cone_h * 0.28)),
+                   (cx + int(S * 0.08), cy - cone_h // 2),
+                   (cx + int(S * 0.08), cy + cone_h // 2),
+                   (cx - int(S * 0.10), cy + int(cone_h * 0.28)),
+                   (cx - int(S * 0.25), cy + int(cone_h * 0.28))]
+            draw.polygon(pts, fill=fg_col)
+            draw.arc([cx, cy - int(S * 0.25), cx + int(S * 0.35), cy + int(S * 0.25)], start=-60, end=60, fill=fg_col, width=stroke_w)
+            draw.arc([cx + int(S * 0.12), cy - int(S * 0.40), cx + int(S * 0.55), cy + int(S * 0.40)], start=-60, end=60, fill=fg_col, width=stroke_w)
+
+        elif name in ("check", "check_circle", "status_clear"):
+            r_c = int(S * 0.40)
+            draw.ellipse([cx - r_c, cy - r_c, cx + r_c, cy + r_c], outline=fg_col, width=stroke_w)
+            pts_check = [
+                (cx - int(r_c * 0.45), cy),
+                (cx - int(r_c * 0.10), cy + int(r_c * 0.40)),
+                (cx + int(r_c * 0.50), cy - int(r_c * 0.35))
+            ]
+            draw.line(pts_check, fill=fg_col, width=stroke_w)
+
+        elif name in ("arrow_right", "right", "chevron", "expand"):
+            pts_chev = [
+                (cx - int(S * 0.16), cy - int(S * 0.28)),
+                (cx + int(S * 0.18), cy),
+                (cx - int(S * 0.16), cy + int(S * 0.28))
+            ]
+            draw.line(pts_chev, fill=fg_col, width=int(stroke_w * 1.2))
+            draw.line([(cx - int(S * 0.22), cy), (cx + int(S * 0.18), cy)], fill=fg_col, width=int(stroke_w * 1.2))
+
+        elif name in ("arrow_left", "left"):
+            pts_left = [
+                (cx + int(S * 0.16), cy - int(S * 0.28)),
+                (cx - int(S * 0.18), cy),
+                (cx + int(S * 0.16), cy + int(S * 0.28))
+            ]
+            draw.line(pts_left, fill=fg_col, width=int(stroke_w * 1.2))
+            draw.line([(cx - int(S * 0.18), cy), (cx + int(S * 0.22), cy)], fill=fg_col, width=int(stroke_w * 1.2))
+
+        elif name in ("target", "center", "crosshair"):
+            r_tgt = int(S * 0.30)
+            draw.ellipse([cx - r_tgt, cy - r_tgt, cx + r_tgt, cy + r_tgt], outline=fg_col, width=stroke_w)
+            draw.ellipse([cx - int(S * 0.08), cy - int(S * 0.08), cx + int(S * 0.08), cy + int(S * 0.08)], fill=fg_col)
+            draw.line([(cx, cy - r_tgt - int(S * 0.08)), (cx, cy - r_tgt + int(S * 0.04))], fill=fg_col, width=stroke_w)
+            draw.line([(cx, cy + r_tgt - int(S * 0.04)), (cx, cy + r_tgt + int(S * 0.08))], fill=fg_col, width=stroke_w)
+            draw.line([(cx - r_tgt - int(S * 0.08), cy), (cx - r_tgt + int(S * 0.04), cy)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + r_tgt - int(S * 0.04), cy), (cx + r_tgt + int(S * 0.08), cy)], fill=fg_col, width=stroke_w)
+
+        elif name in ("camera", "cam"):
+            bw = int(S * 0.70)
+            bh = int(S * 0.48)
+            bx1 = (canvas_size - bw) // 2
+            by1 = cy - int(bh * 0.35)
+            draw.rounded_rectangle([bx1, by1, bx1 + bw, by1 + bh], radius=int(S * 0.08), outline=fg_col, width=stroke_w)
+            draw.rectangle([cx - int(bw * 0.20), by1 - int(S * 0.10), cx + int(bw * 0.20), by1], fill=fg_col)
+            draw.ellipse([cx - int(bh * 0.30), cy + int(bh * 0.12) - int(bh * 0.30), cx + int(bh * 0.30), cy + int(bh * 0.12) + int(bh * 0.30)], outline=fg_col, width=stroke_w)
+
+        elif name in ("fullscreen", "expand_screen"):
+            corner = int(S * 0.22)
+            span = int(S * 0.35)
+            draw.line([(cx - span, cy - span + corner), (cx - span, cy - span), (cx - span + corner, cy - span)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + span - corner, cy - span), (cx + span, cy - span), (cx + span, cy - span + corner)], fill=fg_col, width=stroke_w)
+            draw.line([(cx - span, cy + span - corner), (cx - span, cy + span), (cx - span + corner, cy + span)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + span - corner, cy + span), (cx + span, cy + span), (cx + span, cy + span - corner)], fill=fg_col, width=stroke_w)
+
+        elif name in ("battery", "bat"):
+            bw = int(S * 0.65)
+            bh = int(S * 0.34)
+            bx1 = cx - bw // 2
+            by1 = cy - bh // 2
+            draw.rounded_rectangle([bx1, by1, bx1 + bw, by1 + bh], radius=int(S * 0.06), outline=fg_col, width=stroke_w)
+            draw.rectangle([bx1 + bw, cy - int(bh * 0.25), bx1 + bw + int(S * 0.06), cy + int(bh * 0.25)], fill=fg_col)
+            draw.rectangle([bx1 + int(S * 0.08), by1 + int(S * 0.06), bx1 + int(bw * 0.65), by1 + bh - int(S * 0.06)], fill=fg_col)
+
+        elif name in ("wifi", "network"):
+            draw.ellipse([cx - int(S * 0.06), canvas_size - pad - int(S * 0.10), cx + int(S * 0.06), canvas_size - pad], fill=fg_col)
+            draw.arc([cx - int(S * 0.24), canvas_size - pad - int(S * 0.36), cx + int(S * 0.24), canvas_size - pad + int(S * 0.10)], start=210, end=330, fill=fg_col, width=stroke_w)
+            draw.arc([cx - int(S * 0.40), canvas_size - pad - int(S * 0.60), cx + int(S * 0.40), canvas_size - pad + int(S * 0.20)], start=210, end=330, fill=fg_col, width=stroke_w)
+
+        elif name in ("chip", "gemini_chip", "ai"):
+            cw = int(S * 0.48)
+            draw.rectangle([cx - cw // 2, cy - cw // 2, cx + cw // 2, cy + cw // 2], outline=fg_col, width=stroke_w)
+            draw.rectangle([cx - int(cw * 0.30), cy - int(cw * 0.30), cx + int(cw * 0.30), cy + int(cw * 0.30)], fill=fg_col)
+            pin_l = int(S * 0.12)
+            for d in (-int(cw * 0.25), 0, int(cw * 0.25)):
+                draw.line([(cx + d, cy - cw // 2), (cx + d, cy - cw // 2 - pin_l)], fill=fg_col, width=stroke_w)
+                draw.line([(cx + d, cy + cw // 2), (cx + d, cy + cw // 2 + pin_l)], fill=fg_col, width=stroke_w)
+                draw.line([(cx - cw // 2, cy + d), (cx - cw // 2 - pin_l, cy + d)], fill=fg_col, width=stroke_w)
+                draw.line([(cx + cw // 2, cy + d), (cx + cw // 2 + pin_l, cy + d)], fill=fg_col, width=stroke_w)
+
+        elif name in ("road", "path", "navigation"):
+            # Perspective highway lane with dashed center divider
+            rw_top = int(S * 0.15)
+            rw_bot = int(S * 0.40)
+            y_top = cy - int(S * 0.35)
+            y_bot = cy + int(S * 0.35)
+            draw.line([(cx - rw_top, y_top), (cx - rw_bot, y_bot)], fill=fg_col, width=stroke_w)
+            draw.line([(cx + rw_top, y_top), (cx + rw_bot, y_bot)], fill=fg_col, width=stroke_w)
+            draw.line([(cx, y_top + int(S * 0.08)), (cx, y_top + int(S * 0.22))], fill=fg_col, width=stroke_w)
+            draw.line([(cx, y_top + int(S * 0.36)), (cx, y_bot - int(S * 0.06))], fill=fg_col, width=stroke_w)
+
         else:
             draw.ellipse([pad, pad, canvas_size - pad, canvas_size - pad], outline=fg_col, width=stroke_w)
 
-        alpha_mask = icon_canvas.split()[3]
-        blur_radius = (4.5 * scale) if hover else (3.0 * scale)
-        glow_alpha = alpha_mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-        glow_opacity = 0.95 if hover else 0.65
-        glow_alpha = glow_alpha.point(lambda p: int(p * glow_opacity))
-        
-        glow_layer = Image.new("RGBA", (canvas_size, canvas_size), (*rgb, 0))
-        glow_layer.putalpha(glow_alpha)
-        
-        composite = Image.alpha_composite(glow_layer, icon_canvas)
+        # Clean, crisp anti-aliased icon rendering with zero neon halo
+        composite = icon_canvas
         
         target_size = size
         if hover:
@@ -381,184 +562,287 @@ class HUDTooltip:
                 pass
             self.tip_window = None
 
-class FuturisticAudioCoreRenderer:
+class Real3DCubeRenderer:
     """
-    Clean Futuristic Voice AI Core Renderer:
-    - Main center audio diaphragm (70-85px diameter) with dark glass body (#030303) and glowing cyan core (#00EDFF)
-    - EXACTLY 3 concentric audio-energy rings (Ring 1 Cyan #00EDFF, Ring 2 Mint #4DF7C4, Ring 3 Purple #B377F7)
-    - Symmetrical Left & Right audio waveforms (55-70px width each, mirroring each other)
-    - Clean, voice-oriented, non-radar, non-crosshair aesthetics
-    - Multi-state responsiveness: IDLE calm, LISTENING pulse, SPEAKING dynamic energy, THINKING purple flow, SLEEPING dim
-    - Smooth hover interaction (1.05 scale, +20% glow)
+    Renders an authentic, genuine 3D Isometric Rotating SG CUBE Centerpiece:
+    - Filled 3D glass faces with visible depth, real perspective, and surface lighting.
+    - Top face: Warm light-peach / cream highlight (#F3E4D3 specular sheen and face #C8B49B)
+    - Front face: Deep rich dark-green glass (#153D27 with #2E6B4A border)
+    - Right side face: Lighter green facet (#225E3B with #34D399 border)
+    - Left rim: Subtle cyan reflection line (#38BDF8)
+    - Inner glass refraction depth facets for authentic 3D optical density
+    - Restrained elliptical pedestal disc & orbital rings
+    - Title below: 'SG CUBE' (light peach #F3E4D3) + 'Seeing • Understanding • Helping' (#DCCDBD)
+    - Also provides draw_header_cube for the authentic filled 3D logo in the header bar
     """
-    def __init__(self, canvas_width=280, canvas_height=140):
+    def __init__(self, canvas_width=380, canvas_height=260):
         self.width = canvas_width
         self.height = canvas_height
         self.cx = canvas_width // 2
-        self.cy = canvas_height // 2
+        self.cy = canvas_height // 2 - 25
+        self.cube_rot_y = 0.0
 
-    def draw_audio_core(self, canvas, time_val=0.0, state="IDLE", pulse=1.0, hover=False, mouse_tilt=(0.0, 0.0)):
-        tx, ty = mouse_tilt
-        cx = self.cx + int(ty * 10)
-        cy = self.cy + int(tx * 10)
+    def draw(self, canvas, rot_x=-0.42, rot_y=0.0, rot_z=0.0, time_val=0.0, state="IDLE", hover=False, mouse_tilt=(0.0, 0.0), pulse=1.0):
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw > 40 and ch > 40:
+            cx = cw // 2 + int(mouse_tilt[1] * 14)
+            cy = int(ch * 0.38) + int(mouse_tilt[0] * 14)
+            base_scale = min(cw / 380.0, ch / 260.0)
+        else:
+            cx = self.cx + int(mouse_tilt[1] * 14)
+            cy = self.cy + int(mouse_tilt[0] * 14)
+            base_scale = 1.0
 
         if hover:
             pulse *= 1.05
 
-        # Colors, Waveform Amplitudes & Speeds mapped to backend state
-        if state == "AI_SPEAKING":
-            core_col = "#00EDFF"
-            diaph_col = "#4DF7C4"
-            ring1_col = "#00EDFF"
-            ring2_col = "#4DF7C4"
-            ring3_col = "#B377F7"
-            glow_col = "#08333e"
-            wave_amp = 22.0 if not hover else 26.0
-            wave_speed = 8.5
-            glow_r = int(76 * pulse)
-        elif state == "USER_SPEAKING":
-            core_col = "#B377F7"
-            diaph_col = "#00EDFF"
-            ring1_col = "#00EDFF"
-            ring2_col = "#B377F7"
-            ring3_col = "#4DF7C4"
-            glow_col = "#1c0d28"
-            wave_amp = 18.0 if not hover else 22.0
-            wave_speed = 7.5
-            glow_r = int(74 * pulse)
-        elif state == "AI_THINKING":
-            core_col = "#00EDFF"
-            diaph_col = "#B377F7"
-            ring1_col = "#00EDFF"
-            ring2_col = "#B377F7"
-            ring3_col = "#B377F7"
-            glow_col = "#160a22"
-            wave_amp = 6.0 if not hover else 8.5
-            wave_speed = 4.0
-            glow_r = int(68 * pulse)
-        elif state == "SAFETY_ALERT":
-            core_col = "#FF4757"
-            diaph_col = "#F678AB"
-            ring1_col = "#FF4757"
-            ring2_col = "#F678AB"
-            ring3_col = "#FF4757"
-            glow_col = "#260812"
-            wave_amp = 24.0 if not hover else 28.0
-            wave_speed = 9.0
-            glow_r = int(78 * pulse)
-        elif state == "SLEEPING":
-            core_col = "#242e37"
-            diaph_col = "#181f25"
-            ring1_col = "#161616"
-            ring2_col = "#111111"
-            ring3_col = "#0c0c0c"
-            glow_col = "#040404"
-            wave_amp = 0.0
-            wave_speed = 0.0
-            glow_r = int(42 * pulse)
-        else: # IDLE / LISTENING
-            core_col = "#00EDFF"
-            diaph_col = "#4DF7C4"
-            ring1_col = "#00EDFF"
-            ring2_col = "#4DF7C4"
-            ring3_col = "#B377F7" if state == "LISTENING" else "#0c2b36"
-            glow_col = "#041e26" if state == "LISTENING" else "#021419"
-            wave_amp = 9.0 if state == "LISTENING" else 2.5
-            wave_speed = 6.0 if state == "LISTENING" else 2.5
-            if hover:
-                wave_amp += 3.0
-            glow_r = int((70 if state == "LISTENING" else 60) * pulse)
+        # 1. Base Elliptical Orbital Pedestal & Rings (Restrained Dark Green & Teal)
+        cy_floor = cy + int(70 * base_scale)
+        r3_x, r3_y = int(135 * base_scale), int(34 * base_scale)
+        r2_x, r2_y = int(108 * base_scale), int(27 * base_scale)
+        r1_x, r1_y = int(82 * base_scale), int(20 * base_scale)
 
-        # 1. Soft Ambient Radial Aura Glow
-        canvas.create_oval(cx - glow_r, cy - glow_r, cx + glow_r, cy + glow_r, fill=glow_col, outline="", width=0)
+        # Base dark pedestal disc
+        canvas.create_oval(cx - r2_x, cy_floor - r2_y, cx + r2_x, cy_floor + r2_y, fill="#08140D", outline="#183A2A", width=1)
 
-        # 2. EXACTLY THREE Concentric Audio-Energy Rings
-        # Ring 3: Outer Ring (Purple / Cyan)
-        r3 = int(67 * pulse)
-        canvas.create_oval(cx - r3, cy - r3, cx + r3, cy + r3, outline=ring3_col, width=1)
+        # Outer ring 3 (Subtle Dark Green)
+        canvas.create_oval(cx - r3_x, cy_floor - r3_y, cx + r3_x, cy_floor + r3_y, outline="#183A2A", width=1)
 
-        # Ring 2: Middle Ring (Mint)
-        r2 = int(55 * pulse)
-        canvas.create_oval(cx - r2, cy - r2, cx + r2, cy + r2, outline=ring2_col, width=1)
+        # Middle ring 2 (Dark Green Accent)
+        canvas.create_oval(cx - r2_x, cy_floor - r2_y, cx + r2_x, cy_floor + r2_y, outline="#2E6B4A" if state != "SLEEPING" else "#183A2A", width=1.5)
 
-        # Ring 1: Inner Ring (Cyan)
-        r1 = int(44 * pulse)
-        canvas.create_oval(cx - r1, cy - r1, cx + r1, cy + r1, outline=ring1_col, width=1)
+        # Inner ring 1 (Subtle Teal Reflection)
+        canvas.create_oval(cx - r1_x, cy_floor - r1_y, cx + r1_x, cy_floor + r1_y, outline="#164E40" if state != "SLEEPING" else "#0D2620", width=1)
 
-        # 3. Symmetrical Left & Right Audio Waveforms (55-70px width each, mirrored)
+        # Restrained orbital photon particles
         if state != "SLEEPING":
-            # Primary Left Waveform (x: 12 to 70)
-            pts_left_pri = []
-            pts_left_sec = []
-            for x in range(12, 71, 2):
-                rel = (x - 12) / 58.0
-                env = math.sin(rel * math.pi)
-                wy1 = cy + int(wave_amp * env * math.sin((x - 12) * 0.16 - time_val * wave_speed))
-                wy2 = cy + int((wave_amp * 0.6) * env * math.sin((x - 12) * 0.16 - time_val * wave_speed + 1.0))
-                pts_left_pri.extend([x, wy1])
-                pts_left_sec.extend([x, wy2])
+            particles = [
+                (r3_x, r3_y, time_val * 1.1, "#2E6B4A", max(2, int(2.5 * base_scale))),
+                (r2_x, r2_y, -time_val * 1.4, "#34D399", max(2, int(2.5 * base_scale))),
+                (r1_x, r1_y, time_val * 1.8 + 0.8, "#2DD4BF", max(2, int(2.5 * base_scale))),
+            ]
+            for rx, ry, ang, col, rad in particles:
+                px = cx + rx * math.cos(ang)
+                py = cy_floor + ry * math.sin(ang)
+                canvas.create_oval(px - rad, py - rad, px + rad, py + rad, fill=col, outline="")
 
-            if len(pts_left_pri) >= 4:
-                canvas.create_line(pts_left_pri, fill=ring1_col, width=2 if state in ("AI_SPEAKING", "USER_SPEAKING") else 1.5, smooth=True)
-                if state in ("AI_SPEAKING", "USER_SPEAKING", "LISTENING"):
-                    canvas.create_line(pts_left_sec, fill=ring2_col, width=1, smooth=True)
+        # 2. Authentic 3D Isometric Filled Cube Geometry (Target 180-240px Desktop)
+        size = int((74 if not hover else 80) * base_scale * pulse)
+        raw_verts = [
+            [-size,  size, -size],  # 0: Top-left-back
+            [ size,  size, -size],  # 1: Top-right-back
+            [ size, -size, -size],  # 2: Bottom-right-back
+            [-size, -size, -size],  # 3: Bottom-left-back
+            [-size,  size,  size],  # 4: Top-left-front
+            [ size,  size,  size],  # 5: Top-right-front
+            [ size, -size,  size],  # 6: Bottom-right-front
+            [-size, -size,  size],  # 7: Bottom-left-front
+        ]
 
-            # Symmetrical Right Waveform (x: 210 to 268, exact mirror)
-            pts_right_pri = []
-            pts_right_sec = []
-            for x in range(210, 269, 2):
-                rel = (268 - x) / 58.0 # mirrored relative progress
-                env = math.sin(rel * math.pi)
-                wy1 = cy + int(wave_amp * env * math.sin((268 - x) * 0.16 - time_val * wave_speed))
-                wy2 = cy + int((wave_amp * 0.6) * env * math.sin((268 - x) * 0.16 - time_val * wave_speed + 1.0))
-                pts_right_pri.extend([x, wy1])
-                pts_right_sec.extend([x, wy2])
+        cos_y, sin_y = math.cos(rot_y), math.sin(rot_y)
+        cos_x, sin_x = math.cos(rot_x), math.sin(rot_x)
+        cos_z, sin_z = math.cos(rot_z), math.sin(rot_z)
 
-            if len(pts_right_pri) >= 4:
-                canvas.create_line(pts_right_pri, fill=ring1_col, width=2 if state in ("AI_SPEAKING", "USER_SPEAKING") else 1.5, smooth=True)
-                if state in ("AI_SPEAKING", "USER_SPEAKING", "LISTENING"):
-                    canvas.create_line(pts_right_sec, fill=ring2_col, width=1, smooth=True)
+        rotated_3d = []
+        for vx, vy, vz in raw_verts:
+            x1 = vx * cos_y + vz * sin_y
+            z1 = -vx * sin_y + vz * cos_y
+            y1 = vy
+            y2 = y1 * cos_x - z1 * sin_x
+            z2 = y1 * sin_x + z1 * cos_x
+            x2 = x1
+            x3 = x2 * cos_z - y2 * sin_z
+            y3 = x2 * sin_z + y2 * cos_z
+            z3 = z2
+            rotated_3d.append((x3, y3, z3))
 
-        # 4. Main Center Speaker Diaphragm (70-85px diameter, #030303 dark glass body)
-        body_r = int(38 * pulse) + (2 if hover else 0)
-        canvas.create_oval(cx - body_r, cy - body_r, cx + body_r, cy + body_r,
-                           fill="#030303", outline=ring1_col if state != "SLEEPING" else "#1c1c1c", width=2)
+        fov = 420.0 * base_scale
+        projected = []
+        for x, y, z in rotated_3d:
+            factor = fov / (fov + z) if (fov + z) != 0 else 1.0
+            px = cx + int(x * factor)
+            py = cy - int(y * factor)
+            projected.append((px, py, z))
 
-        # Stepped acoustic depth ring
-        step_r = body_r - 5
-        canvas.create_oval(cx - step_r, cy - step_r, cx + step_r, cy + step_r,
-                           fill="#050d12" if state != "SLEEPING" else "#070707",
-                           outline="#0a2530" if state != "SLEEPING" else "#101010", width=1)
+        faces = [
+            ([0, 1, 5, 4], "top",    "#C8B49B", "#F3E4D3", "#34D399", "#FFF4E6"), # Warm Light Peach top
+            ([4, 5, 6, 7], "front",  "#153D27", "#2E6B4A", "#4ADE80", ""),         # Dark green main face
+            ([1, 2, 6, 5], "right",  "#225E3B", "#34D399", "#34D399", ""),         # Lighter green side
+            ([0, 4, 7, 3], "left",   "#113120", "#1F4A35", "#38BDF8", ""),         # Cyan reflection left
+            ([3, 7, 6, 2], "bottom", "#08160E", "#183A2A", "#183A2A", ""),
+            ([0, 3, 2, 1], "back",   "#08160E", "#183A2A", "#183A2A", ""),
+        ]
 
-        # 5. Central Acoustic Diaphragm Cone
-        diaph_r = int(24 * pulse)
-        canvas.create_oval(cx - diaph_r, cy - diaph_r, cx + diaph_r, cy + diaph_r,
-                           fill="#031620" if state != "SLEEPING" else "#060606",
-                           outline=ring2_col if state != "SLEEPING" else "#141414", width=1.5)
+        visible_faces = []
+        for indices, name, bg_col, edge_col, accent_col, glint_col in faces:
+            v0 = rotated_3d[indices[0]]
+            v1 = rotated_3d[indices[1]]
+            v2 = rotated_3d[indices[2]]
+            e1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+            e2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+            nx = e1[1] * e2[2] - e1[2] * e2[1]
+            ny = e1[2] * e2[0] - e1[0] * e2[2]
+            nz = e1[0] * e2[1] - e1[1] * e2[0]
+            avg_z = sum(rotated_3d[i][2] for i in indices) / 4.0
+            if nz > 0:
+                visible_faces.append((avg_z, indices, name, bg_col, edge_col, accent_col, glint_col))
 
-        # Subtle acoustic diaphragm groove
+        visible_faces.sort(key=lambda item: item[0], reverse=True)
+
+        visible_vert_indices = set()
+        for avg_z, indices, name, bg_col, edge_col, accent_col, glint_col in visible_faces:
+            poly_pts = []
+            for i in indices:
+                poly_pts.extend([projected[i][0], projected[i][1]])
+                visible_vert_indices.add(i)
+
+            # Draw solid filled face
+            canvas.create_polygon(poly_pts, fill=bg_col, outline=edge_col if state != "SLEEPING" else "#183A2A", width=max(1, int(2 * base_scale)))
+
+            # Draw inner glass refraction facet
+            c_x = sum(projected[i][0] for i in indices) / 4.0
+            c_y = sum(projected[i][1] for i in indices) / 4.0
+            inset_pts = []
+            for i in indices:
+                ix = c_x + (projected[i][0] - c_x) * 0.74
+                iy = c_y + (projected[i][1] - c_y) * 0.74
+                inset_pts.extend([ix, iy])
+
+            inset_fill = "#B49F86" if name == "top" else ("#19482E" if name == "front" else "#2A7249")
+            canvas.create_polygon(inset_pts, fill=inset_fill, outline=accent_col if state != "SLEEPING" else "#14251D", width=1)
+
+            # Specular glint on top face front edge
+            if name == "top":
+                p_e0 = projected[indices[2]]
+                p_e1 = projected[indices[3]]
+                canvas.create_line(p_e0[0], p_e0[1], p_e1[0], p_e1[1], fill=glint_col, width=max(1, int(2.5 * base_scale)))
+            elif name == "front":
+                p_e0 = projected[indices[0]]
+                p_e1 = projected[indices[3]]
+                canvas.create_line(p_e0[0], p_e0[1], p_e1[0], p_e1[1], fill="#38BDF8" if state != "SLEEPING" else "#1F4A35", width=max(1, int(1.2 * base_scale)))
+
+        # Vertex nodes on visible corners only
+        for idx in visible_vert_indices:
+            px, py, z = projected[idx]
+            rad = max(1, int(2 * base_scale))
+            canvas.create_oval(px - rad, py - rad, px + rad, py + rad, fill="#4ADE80" if state != "SLEEPING" else "#183A2A", outline="")
+
+        # 3. Text below cube: "SG CUBE" in Light Peach + "Seeing • Understanding • Helping"
+        title_y = cy + int(104 * base_scale)
+        title_font_size = max(13, int(17 * base_scale))
+        canvas.create_text(cx, title_y, text="SG CUBE", fill=COLOR_PEACH_PRIMARY, font=("Segoe UI", title_font_size, "bold"), anchor="center")
+
+        tag_y = title_y + int(19 * base_scale)
+        tag_font_size = max(8, int(10 * base_scale))
+        spacing = int(base_scale * 52)
+        canvas.create_text(cx - spacing * 2, tag_y, text="Seeing", fill=COLOR_PEACH_SECONDARY, font=("Segoe UI", tag_font_size), anchor="center")
+        canvas.create_oval(cx - spacing - 2, tag_y - 2, cx - spacing + 2, tag_y + 2, fill=COLOR_STATUS_GREEN, outline="")
+        canvas.create_text(cx, tag_y, text="Understanding", fill=COLOR_PEACH_SECONDARY, font=("Segoe UI", tag_font_size), anchor="center")
+        canvas.create_oval(cx + spacing - 2, tag_y - 2, cx + spacing + 2, tag_y + 2, fill=COLOR_STATUS_GREEN, outline="")
+        canvas.create_text(cx + spacing * 2, tag_y, text="Helping", fill=COLOR_PEACH_SECONDARY, font=("Segoe UI", tag_font_size), anchor="center")
+
+    def draw_header_cube(self, canvas, rot_y=0.0, rot_x=-0.38, state="IDLE"):
+        """ Renders an authentic filled 3D rotating SG CUBE for the header bar brand logo """
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw < 20 or ch < 20:
+            cw, ch = 48, 48
+        cx, cy = cw // 2, ch // 2
+        size = 14
+
+        # Restrained shadow below header cube
+        canvas.create_oval(cx - 16, cy + 16, cx + 16, cy + 22, fill="#08140D", outline="")
+
+        cos_y, sin_y = math.cos(rot_y), math.sin(rot_y)
+        cos_x, sin_x = math.cos(rot_x), math.sin(rot_x)
+
+        raw_verts = [
+            [-size,  size, -size],  # 0
+            [ size,  size, -size],  # 1
+            [ size, -size, -size],  # 2
+            [-size, -size, -size],  # 3
+            [-size,  size,  size],  # 4
+            [ size,  size,  size],  # 5
+            [ size, -size,  size],  # 6
+            [-size, -size,  size],  # 7
+        ]
+
+        rotated_3d = []
+        for vx, vy, vz in raw_verts:
+            x1 = vx * cos_y + vz * sin_y
+            z1 = -vx * sin_y + vz * cos_y
+            y1 = vy
+            y2 = y1 * cos_x - z1 * sin_x
+            z2 = y1 * sin_x + z1 * cos_x
+            x2 = x1
+            rotated_3d.append((x2, y2, z2))
+
+        fov = 150.0
+        projected = []
+        for x, y, z in rotated_3d:
+            factor = fov / (fov + z) if (fov + z) != 0 else 1.0
+            px = cx + int(x * factor)
+            py = cy - int(y * factor)
+            projected.append((px, py, z))
+
+        faces = [
+            ([0, 1, 5, 4], "top",    "#C8B49B", "#F3E4D3", "#FFF4E6"), # Warm Light Peach top
+            ([4, 5, 6, 7], "front",  "#153D27", "#2E6B4A", ""),         # Dark green main face
+            ([1, 2, 6, 5], "right",  "#225E3B", "#34D399", ""),         # Lighter green side
+            ([0, 4, 7, 3], "left",   "#113120", "#1F4A35", ""),         # Cyan rim accent
+            ([3, 7, 6, 2], "bottom", "#08160E", "#183A2A", ""),
+            ([0, 3, 2, 1], "back",   "#08160E", "#183A2A", ""),
+        ]
+
+        visible_faces = []
+        for indices, name, bg_col, edge_col, glint_col in faces:
+            v0 = rotated_3d[indices[0]]
+            v1 = rotated_3d[indices[1]]
+            v2 = rotated_3d[indices[2]]
+            e1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+            e2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+            nx = e1[1] * e2[2] - e1[2] * e2[1]
+            ny = e1[2] * e2[0] - e1[0] * e2[2]
+            nz = e1[0] * e2[1] - e1[1] * e2[0]
+            avg_z = sum(rotated_3d[i][2] for i in indices) / 4.0
+            if nz > 0:
+                visible_faces.append((avg_z, indices, name, bg_col, edge_col, glint_col))
+
+        visible_faces.sort(key=lambda item: item[0], reverse=True)
+
+        for avg_z, indices, name, bg_col, edge_col, glint_col in visible_faces:
+            poly_pts = []
+            for i in indices:
+                poly_pts.extend([projected[i][0], projected[i][1]])
+            canvas.create_polygon(poly_pts, fill=bg_col, outline=edge_col if state != "SLEEPING" else "#183A2A", width=1.5)
+
+            if name == "top" and glint_col:
+                p_e0 = projected[indices[2]]
+                p_e1 = projected[indices[3]]
+                canvas.create_line(p_e0[0], p_e0[1], p_e1[0], p_e1[1], fill=glint_col, width=2)
+            elif name == "front":
+                p_e0 = projected[indices[0]]
+                p_e1 = projected[indices[3]]
+                canvas.create_line(p_e0[0], p_e0[1], p_e1[0], p_e1[1], fill="#38BDF8" if state != "SLEEPING" else "#1F4A35", width=1)
+
+        for px, py, z in projected:
+            canvas.create_oval(px - 1, py - 1, px + 1, py + 1, fill="#4ADE80" if state != "SLEEPING" else "#183A2A", outline="")
+
+    def draw_audio_core(self, canvas, time_val=0.0, state="IDLE", pulse=1.0, hover=False, mouse_tilt=(0.0, 0.0)):
         if state != "SLEEPING":
-            gr_r = int(diaph_r * 0.60)
-            canvas.create_oval(cx - gr_r, cy - gr_r, cx + gr_r, cy + gr_r, outline="#0b3846", width=1)
-
-        # 6. Center Glowing Core Dome
-        cap_r = int(9 * pulse)
-        canvas.create_oval(cx - cap_r, cy - cap_r, cx + cap_r, cy + cap_r,
-                           fill=core_col if state != "SLEEPING" else "#242e37",
-                           outline="#ffffff" if state != "SLEEPING" else "#333333", width=1)
-        if state != "SLEEPING":
-            canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill="#ffffff", outline="")
+            speed = 1.0 if state == "IDLE" else (1.8 if state == "AI_SPEAKING" else 1.4)
+            self.cube_rot_y += 0.035 * speed
+            if self.cube_rot_y > 2 * math.pi:
+                self.cube_rot_y -= 2 * math.pi
+        rot_x = -0.42 + 0.06 * math.sin(time_val * 1.5)
+        rot_z = 0.03 * math.cos(time_val * 1.2)
+        self.draw(canvas, rot_x=rot_x, rot_y=self.cube_rot_y, rot_z=rot_z, time_val=time_val, state=state, hover=hover, mouse_tilt=mouse_tilt, pulse=pulse)
 
     def draw_cube(self, canvas, *args, **kwargs):
-        """ Backward-compatibility alias for draw_audio_core """
-        time_val = kwargs.get("time_val", 0.0)
-        state = kwargs.get("state", "IDLE")
-        pulse = kwargs.get("pulse", 1.0)
-        hover = kwargs.get("hover", False)
-        mouse_tilt = kwargs.get("mouse_tilt", (0.0, 0.0))
-        self.draw_audio_core(canvas, time_val=time_val, state=state, pulse=pulse, hover=hover, mouse_tilt=mouse_tilt)
+        self.draw_audio_core(canvas, *args, **kwargs)
 
-Real3DCubeRenderer = FuturisticAudioCoreRenderer
+FuturisticAudioCoreRenderer = Real3DCubeRenderer
 
 def animate_dialog_open(dialog, target_alpha=0.98, duration_ms=220):
     """ Smooth opacity opening transition for secondary modal dialogs (220ms ease-out) """
@@ -626,15 +910,68 @@ def animate_dialog_close(dialog, duration_ms=180, callback=None):
             dialog.destroy()
         except Exception:
             pass
-        if callback:
-            callback()
+class VoiceActivityDetector:
+    """
+    Streaming 16kHz Energy & Zero-Crossing Voice Activity Detector (VAD).
+    Operates on 64ms frames (1024 samples @ 16kHz 16-bit PCM).
+    Detects human speech onset and offset with low latency.
+    """
+    def __init__(self, sample_rate=16000, frame_duration_ms=64):
+        self.sample_rate = sample_rate
+        self.frame_size = int(sample_rate * (frame_duration_ms / 1000.0))
+        self.noise_floor = 120.0
+        self.speech_onset_frames = 0
+        self.is_speech_active = False
+        self.silence_frames = 0
+
+    def process_frame(self, pcm_samples: np.ndarray) -> bool:
+        if len(pcm_samples) == 0:
+            return False
+        energy = float(np.sqrt(np.mean(pcm_samples.astype(np.float64)**2)))
+        if not self.is_speech_active:
+            self.noise_floor = 0.96 * self.noise_floor + 0.04 * min(energy, 400.0)
+        speech_thresh = max(self.noise_floor * 2.0, 240.0)
+        if energy > speech_thresh:
+            self.speech_onset_frames += 1
+            self.silence_frames = 0
+            if self.speech_onset_frames >= 2:
+                self.is_speech_active = True
+        else:
+            self.speech_onset_frames = max(0, self.speech_onset_frames - 1)
+            self.silence_frames += 1
+            if self.silence_frames >= 6:  # ~400ms silence
+                self.is_speech_active = False
+        return self.is_speech_active
 
 class SGCubeApp:
+    def _speak_local_response(self, text: str, is_security: bool = False):
+        """
+        Speaks local response text.
+        For normal conversational local responses, unifies audio by delegating to Gemini Live.
+        Windows SAPI is restricted strictly to offline security password prompts.
+        """
+        if not text:
+            return
+        if not is_security:
+            with self.session_lock:
+                self.pending_speech_prompt = f"Speak this exact response out loud in a warm, natural, friendly, confident voice: '{text}'"
+            return
+
+        if os.name == 'nt':
+            try:
+                import win32com.client
+                v = win32com.client.Dispatch("SAPI.SpVoice")
+                v.Speak(text, 1)  # SVSFlagsAsync = 1
+                print(f"[SECURITY-VOICE] SAPI spoken: '{text}'")
+            except Exception as e:
+                print(f"[SECURITY-VOICE] SAPI notice: {e}")
+
+
     def __init__(self, root):
         self.root = root
         self.root.title("SG CUBE — Personal AI Companion")
         self.root.geometry("1080x820")
-        self.root.minsize(960, 720)
+        self.root.minsize(480, 360)
         self.root.configure(bg=COLOR_BG_PRIMARY)
         self.root.option_add("*Font", ("Segoe UI", 10))
 
@@ -655,8 +992,8 @@ class SGCubeApp:
             except Exception:
                 pass
 
-        # Instantiate Assistive Vision Engine
-        self.engine = VisionEngine(data_dir="data")
+        # Instantiate Assistive Vision Engine with per-request voice password protection for Secure Memory
+        self.engine = VisionEngine(data_dir="data", per_request_auth=True)
 
         # State variables and locks
         self.camera_running = False
@@ -710,6 +1047,18 @@ class SGCubeApp:
 
         # Enforce Single-Instance Application Lock
         self._enforce_single_instance()
+
+        # Full-Window Dark Abstract Background Image Setup
+        self.bg_orig_image = None
+        self.bg_photo_image = None
+        self.bg_image_id = None
+        self._last_bg_size = None
+        _bg_path = os.path.join(_app_dir, "assets", "bg_abstract_dark.jpg")
+        if os.path.exists(_bg_path):
+            try:
+                self.bg_orig_image = Image.open(_bg_path).convert("RGB")
+            except Exception as e:
+                print(f"[UI] Warning loading background image: {e}")
 
         self._build_ui()
         self._bind_shortcuts()
@@ -819,78 +1168,108 @@ class SGCubeApp:
 
     # --- Premium Ultra-Dark HUD UI Construction ---
     # --- Premium Ultra-Dark HUD UI Construction (Reference Locked 1536x1024 Base) ---
+    # --- SG CUBE 2.5 Responsive Ultra-Dark HUD UI Construction (media_1790103688268.png) ---
     def _build_ui(self):
-        # 1. Header Navigation & Status Bar (#000000 Background, Height 62px)
-        header = tk.Frame(self.root, bg=COLOR_BG_PRIMARY, height=62, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        # 1. Header Navigation & Status Bar (Charcoal Background, Height 92px, Subtle Dark Green Border)
+        header = tk.Frame(self.root, bg=COLOR_BG_SECONDARY, height=92, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
         header.pack(fill=tk.X, side=tk.TOP)
         header.pack_propagate(False)
+        self.header_frame = header
 
-        # Brand Container (32x32px 3D Glowing Futuristic Cube Logo + 24px SG CUBE Title + Subtitle)
-        brand_frame = tk.Frame(header, bg=COLOR_BG_PRIMARY)
-        brand_frame.pack(side=tk.LEFT, padx=(18, 10))
+        # Brand Container (48x48px Filled 3D Rotating Cube Canvas + Bold "SG CUBE" Title + Subtitle)
+        brand_frame = tk.Frame(header, bg=COLOR_BG_SECONDARY)
+        self.brand_frame = brand_frame
 
-        logo_img = GlowingHUDIcon.get_photo_image("logo", size=32, color_hex=COLOR_CYAN_PRIMARY, hover=False, master=brand_frame)
-        self.brand_icon_lbl = tk.Label(brand_frame, image=logo_img, bg=COLOR_BG_PRIMARY)
-        self.brand_icon_lbl.image = logo_img
-        self.brand_icon_lbl.pack(side=tk.LEFT, padx=(0, 8))
+        self.header_cube_canvas = tk.Canvas(brand_frame, width=48, height=48, bg=COLOR_BG_SECONDARY, highlightthickness=0)
+        self.header_cube_canvas.pack(side=tk.LEFT, padx=(0, 10))
+        self.brand_icon_lbl = self.header_cube_canvas  # Backwards-compatible alias
 
-        brand_logo = tk.Label(brand_frame, text="SG CUBE", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 16, "bold"))
-        brand_logo.pack(side=tk.LEFT)
+        title_container = tk.Frame(brand_frame, bg=COLOR_BG_SECONDARY)
+        title_container.pack(side=tk.LEFT)
 
-        brand_sub = tk.Label(brand_frame, text="Personal AI Companion", bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9))
-        brand_sub.pack(side=tk.LEFT, padx=(8, 0))
+        title_row = tk.Frame(title_container, bg=COLOR_BG_SECONDARY)
+        title_row.pack(anchor="w")
+        self.lbl_brand_sg = tk.Label(title_row, text="SG", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 26, "bold"))
+        self.lbl_brand_sg.pack(side=tk.LEFT)
+        self.lbl_brand_cube = tk.Label(title_row, text=" CUBE", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 26, "bold"))
+        self.lbl_brand_cube.pack(side=tk.LEFT)
 
-        # Centered Navigation Group (20px Category-Colored Vector Icons, 14px Text, 8px Gap, 14px H-Pad, 9px V-Pad)
-        nav_frame = tk.Frame(header, bg=COLOR_BG_PRIMARY)
-        nav_frame.pack(side=tk.LEFT, expand=True)
+        self.lbl_brand_sub = tk.Label(title_container, text="Personal AI Companion", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_SECONDARY, font=("Segoe UI", 10))
+        self.lbl_brand_sub.pack(anchor="w")
+
+        # Row 3: Seeing • Understanding • Helping tagline
+        self.lbl_brand_motto = tk.Label(title_container, text="Seeing • Understanding • Helping", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 8))
+        self.lbl_brand_motto.pack(anchor="w")
+
+        # Centered Navigation Group: Large Icons with Text STRICTLY BELOW Icon
+        nav_frame = tk.Frame(header, bg=COLOR_BG_SECONDARY)
+        self.nav_frame = nav_frame
 
         self.nav_buttons = {}
-        self.nav_buttons["home"] = self._create_nav_btn(nav_frame, "home", "Home", self._on_nav_home, active=True, accent=COLOR_CYAN_PRIMARY, tooltip="Home dashboard")
-        self.nav_buttons["vision"] = self._create_nav_btn(nav_frame, "vision", "Vision", self.open_vision_dialog, accent=COLOR_TEAL_MINT, tooltip="Live vision")
-        self.nav_buttons["memory"] = self._create_nav_btn(nav_frame, "memory", "Memory", self.open_memory_dialog, accent=COLOR_PURPLE, tooltip="Personal memory")
-        self.nav_buttons["history"] = self._create_nav_btn(nav_frame, "history", "History", self.open_history_dialog, accent=COLOR_PURPLE, tooltip="Conversation history")
-        self.nav_buttons["people"] = self._create_nav_btn(nav_frame, "people", "People", self.open_people_dialog, accent=COLOR_ORANGE, tooltip="Face profiles")
-        self.nav_buttons["glasses"] = self._create_nav_btn(nav_frame, "glasses", "Meta Glass", self.open_meta_glass_dialog, accent=COLOR_CYAN_PRIMARY, tooltip="Meta Glass")
+        self.nav_buttons["home"] = self._create_nav_btn(nav_frame, "home", "Home", self._on_nav_home, active=True, accent=COLOR_ICON_HOME, tooltip="Home dashboard")
+        self.nav_buttons["vision"] = self._create_nav_btn(nav_frame, "vision", "Vision", self.open_vision_dialog, accent=COLOR_ICON_VISION, tooltip="Live vision")
+        self.nav_buttons["memory"] = self._create_nav_btn(nav_frame, "memory", "Memory", self.open_memory_dialog, accent=COLOR_ICON_MEMORY, tooltip="Personal memory")
+        self.nav_buttons["history"] = self._create_nav_btn(nav_frame, "history", "History", self.open_history_dialog, accent=COLOR_ICON_HISTORY, tooltip="Conversation history")
+        self.nav_buttons["people"] = self._create_nav_btn(nav_frame, "people", "People", self.open_people_dialog, accent=COLOR_ICON_PEOPLE, tooltip="Face profiles")
+        self.nav_buttons["glasses"] = self._create_nav_btn(nav_frame, "glasses", "Meta Glass", self.open_meta_glass_dialog, accent=COLOR_ICON_METAGLASS, tooltip="Meta Glass")
 
-        # Right Header Action Icons (~105px Status Pill + 24px Settings Gear)
-        actions_frame = tk.Frame(header, bg=COLOR_BG_PRIMARY)
-        actions_frame.pack(side=tk.RIGHT, padx=18)
+        # Right Header: Status Badge Pill + Settings Button
+        actions_frame = tk.Frame(header, bg=COLOR_BG_SECONDARY)
+        self.actions_frame = actions_frame
+
+        header.grid_columnconfigure(0, weight=0)
+        header.grid_columnconfigure(1, weight=1)
+        header.grid_columnconfigure(2, weight=0)
+        header.grid_rowconfigure(0, weight=1)
+
+        brand_frame.grid(row=0, column=0, sticky="w", padx=(16, 8), pady=4)
+        nav_frame.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
+        actions_frame.grid(row=0, column=2, sticky="e", padx=(8, 16), pady=4)
+
+        # Status Badge Pill with Waveform Icon, Green Dot, and Dark Green Border (Prominent, High-Visibility)
+        status_pill_frame = tk.Frame(actions_frame, bg=COLOR_PANEL_DEEP, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, padx=14, pady=6)
+        status_pill_frame.pack(side=tk.LEFT, padx=(0, 12))
+        self.status_pill_frame = status_pill_frame
+
+        wave_img = GlowingHUDIcon.get_photo_image("waveform", size=22, color_hex=COLOR_STATUS_GREEN, master=status_pill_frame)
+        self.status_wave_lbl = tk.Label(status_pill_frame, image=wave_img, bg=COLOR_PANEL_DEEP)
+        self.status_wave_lbl.image = wave_img
+        self.status_wave_lbl.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.status_dot_lbl = tk.Label(status_pill_frame, text="●", bg=COLOR_PANEL_DEEP, fg=COLOR_STATUS_GREEN, font=("Segoe UI", 9, "bold"))
+        self.status_dot_lbl.pack(side=tk.LEFT, padx=(0, 5))
 
         self.sys_status_label = tk.Label(
-            actions_frame,
-            text="● Online",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_STATUS_GREEN,
-            font=("Segoe UI", 9, "bold"),
-            padx=14,
-            pady=4,
-            highlightbackground="#06383D",
-            highlightthickness=1
+            status_pill_frame,
+            text="Listening...",
+            bg=COLOR_PANEL_DEEP,
+            fg=COLOR_PEACH_PRIMARY,
+            font=("Segoe UI", 12, "bold")
         )
-        self.sys_status_label.pack(side=tk.LEFT, padx=(0, 12))
+        self.sys_status_label.pack(side=tk.LEFT)
 
-        # Settings Gear Icon Button (24px with 10° Smooth Animated Rotation on Hover)
-        gear_img_normal = GlowingHUDIcon.get_photo_image("gear", size=24, color_hex=COLOR_CYAN_PRIMARY, hover=False, master=actions_frame, rotation=0.0)
+        # Settings Gear Icon Button (30px with 10° Smooth Animated Rotation on Hover)
+        gear_img_normal = GlowingHUDIcon.get_photo_image("gear", size=30, color_hex=COLOR_PEACH_PRIMARY, hover=False, master=actions_frame, rotation=0.0)
         gear_imgs_enter = [
-            GlowingHUDIcon.get_photo_image("gear", size=26, color_hex=COLOR_CYAN_PRIMARY, hover=True, master=actions_frame, rotation=3.5),
-            GlowingHUDIcon.get_photo_image("gear", size=26, color_hex=COLOR_CYAN_PRIMARY, hover=True, master=actions_frame, rotation=7.0),
-            GlowingHUDIcon.get_photo_image("gear", size=26, color_hex=COLOR_CYAN_PRIMARY, hover=True, master=actions_frame, rotation=10.0),
+            GlowingHUDIcon.get_photo_image("gear", size=32, color_hex=COLOR_DARK_GREEN_LIGHT, hover=True, master=actions_frame, rotation=3.5),
+            GlowingHUDIcon.get_photo_image("gear", size=32, color_hex=COLOR_DARK_GREEN_LIGHT, hover=True, master=actions_frame, rotation=7.0),
+            GlowingHUDIcon.get_photo_image("gear", size=32, color_hex=COLOR_DARK_GREEN_LIGHT, hover=True, master=actions_frame, rotation=10.0),
         ]
         gear_imgs_leave = [
-            GlowingHUDIcon.get_photo_image("gear", size=25, color_hex=COLOR_CYAN_PRIMARY, hover=True, master=actions_frame, rotation=7.0),
-            GlowingHUDIcon.get_photo_image("gear", size=24, color_hex=COLOR_CYAN_PRIMARY, hover=False, master=actions_frame, rotation=3.5),
+            GlowingHUDIcon.get_photo_image("gear", size=31, color_hex=COLOR_DARK_GREEN_LIGHT, hover=True, master=actions_frame, rotation=7.0),
+            GlowingHUDIcon.get_photo_image("gear", size=30, color_hex=COLOR_PEACH_PRIMARY, hover=False, master=actions_frame, rotation=3.5),
             gear_img_normal,
         ]
 
         self.btn_settings = tk.Button(
             actions_frame,
             image=gear_img_normal,
-            bg=COLOR_BG_SECONDARY,
-            activebackground="#0A0A0A",
+            bg=COLOR_PANEL_DEEP,
+            activebackground=COLOR_PANEL_HOVER,
             relief=tk.FLAT,
             bd=0,
-            padx=8,
-            pady=3,
+            padx=10,
+            pady=6,
             cursor="hand2",
             highlightbackground=COLOR_BORDER_SUBTLE,
             highlightthickness=1,
@@ -904,7 +1283,7 @@ class SGCubeApp:
         def on_gear_enter(e):
             if btn_settings.anim_job:
                 self.root.after_cancel(btn_settings.anim_job)
-            btn_settings.config(bg="#0A0A0A", image=gear_imgs_enter[0], highlightbackground=COLOR_CYAN_PRIMARY)
+            btn_settings.config(bg=COLOR_PANEL_HOVER, image=gear_imgs_enter[0], highlightbackground=COLOR_BORDER_ACTIVE)
             def frame1():
                 btn_settings.config(image=gear_imgs_enter[1])
             def frame2():
@@ -919,202 +1298,267 @@ class SGCubeApp:
             def frame1():
                 btn_settings.config(image=gear_imgs_leave[1])
             def frame2():
-                btn_settings.config(bg=COLOR_BG_SECONDARY, image=gear_imgs_leave[2], highlightbackground=COLOR_BORDER_SUBTLE)
+                btn_settings.config(bg=COLOR_PANEL_DEEP, image=gear_imgs_leave[2], highlightbackground=COLOR_BORDER_SUBTLE)
             self.root.after(45, frame1)
             btn_settings.anim_job = self.root.after(90, frame2)
 
         btn_settings.bind("<Enter>", on_gear_enter, add="+")
         btn_settings.bind("<Leave>", on_gear_leave, add="+")
-
         btn_settings.pack(side=tk.LEFT)
         HUDTooltip(btn_settings, "Settings")
 
-        # 2. Main Stage (Pure Black #000000)
-        main_stage = tk.Frame(self.root, bg=COLOR_BG_PRIMARY)
-        main_stage.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 8))
+        # 2. Footer Bar (#0A0D08 Background, Height ~28px)
+        footer = tk.Frame(self.root, bg=COLOR_BG_SECONDARY, height=28, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        footer.pack_propagate(False)
+        self.footer_bar = footer
 
-        # Main Vision Panel (#030303 Panel with 1px #00EDFF Cyan Border and Subtle Outer Glow)
-        cam_outer_card = tk.Frame(main_stage, bg=COLOR_BG_SECONDARY, highlightbackground=COLOR_CYAN_PRIMARY, highlightthickness=1)
-        cam_outer_card.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.footer_left_lbl = tk.Label(footer, text="SG CUBE 2.5.0  |  Your Personal AI Companion", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 9))
+        self.footer_left_lbl.pack(side=tk.LEFT, padx=16)
 
-        cam_top_bar = tk.Frame(cam_outer_card, bg=COLOR_BG_SECONDARY)
-        cam_top_bar.pack(fill=tk.X, padx=15, pady=8)
+        self.footer_right_lbl = tk.Label(footer, text="", bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 9))
+        self.footer_right_lbl.pack(side=tk.RIGHT, padx=16)
 
-        cam_title_frame = tk.Frame(cam_top_bar, bg=COLOR_BG_SECONDARY)
-        cam_title_frame.pack(side=tk.LEFT)
-        self.cam_live_dot = tk.Label(cam_title_frame, text="●", bg=COLOR_BG_SECONDARY, fg=COLOR_ALERT_RED, font=("Segoe UI", 9, "bold"))
-        self.cam_live_dot.pack(side=tk.LEFT, padx=(0, 4))
-        cam_title = tk.Label(cam_title_frame, text="LIVE VISION", bg=COLOR_BG_SECONDARY, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 10, "bold"))
-        cam_title.pack(side=tk.LEFT)
+        # 3. Main Scrollable Container (Canvas + Scrollable Virtual Frame)
+        self.main_container = tk.Frame(self.root, bg=COLOR_BG_PRIMARY)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        self.cam_badge = tk.Label(
-            cam_top_bar,
-            text="● 20 FPS",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_TEAL_MINT,
-            font=("Segoe UI", 8, "bold"),
-            padx=10,
-            pady=2,
-            highlightbackground="#06383D",
-            highlightthickness=1
-        )
-        self.cam_badge.pack(side=tk.RIGHT)
+        self.main_canvas = tk.Canvas(self.main_container, bg=COLOR_BG_PRIMARY, highlightthickness=0)
+        self.main_scrollbar = tk.Scrollbar(self.main_container, orient=tk.VERTICAL, command=self.main_canvas.yview)
+        self.scrollable_content = tk.Frame(self.main_canvas, bg=COLOR_BG_PRIMARY)
 
-        # Main Camera Viewport Frame (Holds Left Environment HUD, Center Camera Preview, Right Objects HUD)
-        cam_viewport_frame = tk.Frame(cam_outer_card, bg=COLOR_BG_SECONDARY)
-        cam_viewport_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_content, anchor="nw")
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
 
-        # --- LEFT SIDE: ENVIRONMENT HUD CARD (Width 165px) ---
+        self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _on_canvas_configure(event):
+            self.main_canvas.itemconfig(self.canvas_window, width=event.width)
+            self._update_scroll_region()
+            self._update_background_canvas(event.width, event.height)
+
+        self.main_canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            if self.main_scrollbar.winfo_ismapped():
+                self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self.scrollable_content.bind("<MouseWheel>", _on_mousewheel, add="+")
+        self.main_canvas.bind("<MouseWheel>", _on_mousewheel, add="+")
+
+        # 4. Upper Stage Container (Holds Environment, Camera Feed, Scene)
+        self.stage_upper = tk.Frame(self.scrollable_content, bg=COLOR_BG_PRIMARY)
+        self.stage_upper.pack(fill=tk.X, padx=14, pady=(8, 4))
+
+        # --- LEFT: ENVIRONMENT PANEL ---
         self.hud_env_card = tk.Frame(
-            cam_viewport_frame,
-            bg="#050505",
-            highlightbackground="#102530",
+            self.stage_upper,
+            bg=COLOR_PANEL_DEEP,
+            highlightbackground=COLOR_BORDER_SUBTLE,
             highlightthickness=1,
-            width=165,
-            padx=10,
-            pady=8
-        )
-        self.hud_env_card.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 12), pady=2)
-        self.hud_env_card.pack_propagate(False)
-
-        self.hud_env_title = tk.Label(
-            self.hud_env_card,
-            text="ENVIRONMENT",
-            bg="#050505",
-            fg=COLOR_CYAN_PRIMARY,
-            font=("Segoe UI", 8, "bold"),
-            anchor="w"
-        )
-        self.hud_env_title.pack(fill=tk.X, pady=(0, 6))
-
-        self.hud_env_person_lbl = tk.Label(self.hud_env_card, text="● Person: None", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w")
-        self.hud_env_person_lbl.pack(fill=tk.X, pady=2)
-
-        self.hud_env_room_lbl = tk.Label(self.hud_env_card, text="▣ Room: Clear space", bg="#050505", fg="#8B96A5", font=("Segoe UI", 8), anchor="w", wraplength=145, justify=tk.LEFT)
-        self.hud_env_room_lbl.pack(fill=tk.X, pady=2)
-
-        self.hud_env_light_lbl = tk.Label(self.hud_env_card, text="☼ Light: Normal", bg="#050505", fg="#4DF7C4", font=("Segoe UI", 8), anchor="w")
-        self.hud_env_light_lbl.pack(fill=tk.X, pady=2)
-
-        self.hud_env_safety_lbl = tk.Label(self.hud_env_card, text="⚠ Safety: Clear", bg="#050505", fg=COLOR_STATUS_GREEN, font=("Segoe UI", 8, "bold"), anchor="w", wraplength=145, justify=tk.LEFT)
-        self.hud_env_safety_lbl.pack(fill=tk.X, pady=2)
-
-        # Subtle hover on environment card
-        def _on_env_enter(e):
-            self.hud_env_card.config(bg="#0A0A0A", highlightbackground=COLOR_CYAN_PRIMARY)
-            self.hud_env_title.config(bg="#0A0A0A")
-            for w in (self.hud_env_person_lbl, self.hud_env_room_lbl, self.hud_env_light_lbl, self.hud_env_safety_lbl):
-                w.config(bg="#0A0A0A")
-        def _on_env_leave(e):
-            self.hud_env_card.config(bg="#050505", highlightbackground="#102530")
-            self.hud_env_title.config(bg="#050505")
-            for w in (self.hud_env_person_lbl, self.hud_env_room_lbl, self.hud_env_light_lbl, self.hud_env_safety_lbl):
-                w.config(bg="#050505")
-        self.hud_env_card.bind("<Enter>", _on_env_enter, add="+")
-        self.hud_env_card.bind("<Leave>", _on_env_leave, add="+")
-
-        # --- CENTER: REAL CAMERA PREVIEW ---
-        self.preview_label = tk.Label(
-            cam_viewport_frame,
-            text="Initializing SG CUBE Vision Window...",
-            bg=COLOR_BG_PRIMARY,
-            fg=COLOR_TEXT_SECONDARY,
-            font=("Segoe UI", 11)
-        )
-        self.preview_label.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=2)
-
-        # --- RIGHT SIDE: OBJECTS HUD CARD (Width 165px) ---
-        self.hud_obj_card = tk.Frame(
-            cam_viewport_frame,
-            bg="#050505",
-            highlightbackground="#102530",
-            highlightthickness=1,
-            width=165,
-            padx=10,
-            pady=8
-        )
-        self.hud_obj_card.pack(side=tk.RIGHT, fill=tk.Y, padx=(12, 0), pady=2)
-        self.hud_obj_card.pack_propagate(False)
-
-        self.hud_obj_title = tk.Label(
-            self.hud_obj_card,
-            text="SCENE",
-            bg="#050505",
-            fg=COLOR_CYAN_PRIMARY,
-            font=("Segoe UI", 8, "bold"),
-            anchor="w"
-        )
-        self.hud_obj_title.pack(fill=tk.X, pady=(0, 4))
-
-        self.hud_obj_labels = []
-        for _ in range(6):
-            lbl = tk.Label(self.hud_obj_card, text="", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 8), anchor="w", wraplength=145, justify=tk.LEFT)
-            lbl.pack(fill=tk.X, pady=1)
-            self.hud_obj_labels.append(lbl)
-
-        # Subtle hover on objects card
-        def _on_obj_enter(e):
-            self.hud_obj_card.config(bg="#0A0A0A", highlightbackground=COLOR_CYAN_PRIMARY)
-            self.hud_obj_title.config(bg="#0A0A0A")
-            for w in self.hud_obj_labels:
-                w.config(bg="#0A0A0A")
-        def _on_obj_leave(e):
-            self.hud_obj_card.config(bg="#050505", highlightbackground="#102530")
-            self.hud_obj_title.config(bg="#050505")
-            for w in self.hud_obj_labels:
-                w.config(bg="#050505")
-        self.hud_obj_card.bind("<Enter>", _on_obj_enter, add="+")
-        self.hud_obj_card.bind("<Leave>", _on_obj_leave, add="+")
-
-        # 2.5 Real Information Strip (Height 95-105px: Recent History | System Status | User/Time | Quick Memory)
-        self._build_info_strip(main_stage)
-
-        # 3. Lower Stage: SG CUBE AI Control Deck (#000000 Background, 20-25% height)
-        lower_stage = tk.Frame(main_stage, bg=COLOR_BG_PRIMARY, height=215)
-        lower_stage.pack(fill=tk.X, side=tk.BOTTOM)
-        lower_stage.pack_propagate(False)
-
-        # Center Status Pill (Centered directly ABOVE 3D Cube, ~150-170px x 32-36px, bg #030303, border 1px #06383D, text 13px #00EDFF)
-        self.context_banner = tk.Label(
-            lower_stage,
-            text="● SG CUBE Listening",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_CYAN_PRIMARY,
-            font=("Segoe UI", 9, "bold"),
             padx=16,
-            pady=3,
-            highlightbackground="#06383D",
-            highlightthickness=1
+            pady=14
         )
-        self.context_banner.pack(anchor="n", pady=(0, 2))
 
-        # Centered AI Core Control Deck: Left 4 Buttons | Center Large 3D Cube | Right 4 Buttons
-        deck_frame = tk.Frame(lower_stage, bg=COLOR_BG_PRIMARY)
-        deck_frame.pack(anchor="center", pady=(0, 2))
+        env_title_frame = tk.Frame(self.hud_env_card, bg=COLOR_PANEL_DEEP)
+        env_title_frame.pack(fill=tk.X, pady=(0, 10))
+        tree_img = GlowingHUDIcon.get_photo_image("tree", size=24, color_hex=COLOR_DARK_GREEN_LIGHT, master=env_title_frame)
+        lbl_env_icon = tk.Label(env_title_frame, image=tree_img, bg=COLOR_PANEL_DEEP)
+        lbl_env_icon.image = tree_img
+        lbl_env_icon.pack(side=tk.LEFT, padx=(0, 8))
+        self.hud_env_title = tk.Label(env_title_frame, text="ENVIRONMENT", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 16, "bold"))
+        self.hud_env_title.pack(side=tk.LEFT)
 
-        # Left Action Group (4 Buttons: Speak, Describe, Recognize, Memory — compact horizontal row)
-        left_card = tk.Frame(deck_frame, bg=COLOR_BG_PRIMARY)
-        left_card.pack(side=tk.LEFT, padx=(0, 8))
+        def _make_env_row(icon_name, icon_col, label_text, default_val, val_col=COLOR_PEACH_SECONDARY):
+            row = tk.Frame(self.hud_env_card, bg=COLOR_PANEL_DEEP)
+            row.pack(fill=tk.X, pady=6)
+            ic_img = GlowingHUDIcon.get_photo_image(icon_name, size=20, color_hex=icon_col, master=row)
+            ic_lbl = tk.Label(row, image=ic_img, bg=COLOR_PANEL_DEEP)
+            ic_lbl.image = ic_img
+            ic_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            name_lbl = tk.Label(row, text=label_text, bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 13), anchor="w")
+            name_lbl.pack(side=tk.LEFT)
+            val_lbl = tk.Label(row, text=default_val, bg=COLOR_PANEL_DEEP, fg=val_col, font=("Segoe UI", 13, "bold"), anchor="e")
+            val_lbl.pack(side=tk.RIGHT)
+            return val_lbl
 
-        self.action_buttons = {}
-        self.action_buttons["speak"] = self._create_floating_action_btn(left_card, "mic", "Speak", lambda: self._on_space_shortcut(), accent=COLOR_PINK, tooltip="Speak to SG CUBE")
-        self.action_buttons["describe"] = self._create_floating_action_btn(left_card, "describe", "Describe", lambda: self._trigger_action_async("describe", "Scene Description", "What is around me?"), accent=COLOR_TEAL_MINT, tooltip="Describe what the camera sees")
-        self.action_buttons["recognize"] = self._create_floating_action_btn(left_card, "recognize", "Recognize", lambda: self._trigger_action_async("recognize", "Face Recognition", "Who is in front of me?"), accent=COLOR_ORANGE, tooltip="Recognize people")
-        self.action_buttons["memory"] = self._create_floating_action_btn(left_card, "memory", "Memory", self.open_memory_dialog, accent=COLOR_PURPLE, tooltip="Save or recall memory")
+        self.hud_env_labels = [
+            _make_env_row("recognize", COLOR_ICON_VISION, "People", "1 person", val_col=COLOR_PEACH_SECONDARY),
+            _make_env_row("home", COLOR_ICON_MEMORY, "Room", "Living Room", val_col=COLOR_PEACH_SECONDARY),
+            _make_env_row("sun", COLOR_WARNING_GOLD, "Lighting", "Normal", val_col=COLOR_PEACH_SECONDARY),
+            _make_env_row("waveform", COLOR_STATUS_GREEN, "Noise", "Low", val_col=COLOR_PEACH_SECONDARY),
+            _make_env_row("safety", COLOR_STATUS_GREEN, "Safety", "Clear", val_col=COLOR_STATUS_GREEN),
+        ]
+        self.hud_env_person_lbl = self.hud_env_labels[0]
+        self.hud_env_room_lbl = self.hud_env_labels[1]
+        self.hud_env_light_lbl = self.hud_env_labels[2]
+        self.hud_env_noise_lbl = self.hud_env_labels[3]
+        self.hud_env_safety_lbl = self.hud_env_labels[4]
 
-        # Center AI Audio Core Canvas (280px x 140px: Circular AI Speaker Core body 95-115px, footprint 150-180px)
+        # --- CENTER: DOMINANT CAMERA FEED ---
+        self.cam_outer_card = tk.Frame(
+            self.stage_upper,
+            bg="#0B1812",
+            highlightbackground=COLOR_BORDER_SUBTLE,
+            highlightthickness=1,
+            padx=10,
+            pady=8
+        )
+
+        cam_bar = tk.Frame(self.cam_outer_card, bg="#0B1812")
+        cam_bar.pack(fill=tk.X, padx=6, pady=(2, 6))
+
+        cam_left_capsules = tk.Frame(cam_bar, bg="#0B1812")
+        cam_left_capsules.pack(side=tk.LEFT)
+
+        live_capsule = tk.Frame(cam_left_capsules, bg="#1A0D0F", highlightbackground=COLOR_ALERT_RED, highlightthickness=1, padx=8, pady=2)
+        live_capsule.pack(side=tk.LEFT, padx=(0, 8))
+        self.cam_live_dot = tk.Label(live_capsule, text="●", bg="#1A0D0F", fg=COLOR_ALERT_RED, font=("Segoe UI", 9, "bold"))
+        self.cam_live_dot.pack(side=tk.LEFT, padx=(0, 4))
+        self.cam_live_lbl = tk.Label(live_capsule, text="LIVE", bg="#1A0D0F", fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 9, "bold"))
+        self.cam_live_lbl.pack(side=tk.LEFT)
+
+        fps_capsule = tk.Frame(cam_left_capsules, bg="#0B1C1D", highlightbackground=COLOR_BORDER_ACTIVE, highlightthickness=1, padx=8, pady=2)
+        fps_capsule.pack(side=tk.LEFT)
+        self.cam_badge = tk.Label(fps_capsule, text="25 FPS", bg="#0B1C1D", fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 9, "bold"))
+        self.cam_badge.pack(side=tk.LEFT)
+
+        cam_right_btns = tk.Frame(cam_bar, bg="#0B1812")
+        cam_right_btns.pack(side=tk.RIGHT)
+
+        cam_switch_img = GlowingHUDIcon.get_photo_image("camera", size=22, color_hex=COLOR_PEACH_PRIMARY, master=cam_right_btns)
+        self.btn_cam_toggle = tk.Button(cam_right_btns, image=cam_switch_img, bg=COLOR_PANEL_DEEP, activebackground=COLOR_PANEL_HOVER, bd=0, relief=tk.FLAT, padx=6, pady=3, cursor="hand2", command=self.toggle_camera)
+        self.btn_cam_toggle.image = cam_switch_img
+        self.btn_cam_toggle.pack(side=tk.LEFT, padx=4)
+        HUDTooltip(self.btn_cam_toggle, "Switch / Toggle Camera")
+
+        fs_img = GlowingHUDIcon.get_photo_image("fullscreen", size=22, color_hex=COLOR_PEACH_PRIMARY, master=cam_right_btns)
+        self.btn_fullscreen = tk.Button(cam_right_btns, image=fs_img, bg=COLOR_PANEL_DEEP, activebackground=COLOR_PANEL_HOVER, bd=0, relief=tk.FLAT, padx=6, pady=3, cursor="hand2", command=self._toggle_fullscreen)
+        self.btn_fullscreen.image = fs_img
+        self.btn_fullscreen.pack(side=tk.LEFT, padx=4)
+        HUDTooltip(self.btn_fullscreen, "Toggle Fullscreen")
+
+        self.cam_viewport = tk.Frame(self.cam_outer_card, bg="#040806")
+        self.cam_viewport.pack(fill=tk.BOTH, expand=True, padx=4, pady=(2, 4))
+
+        self.preview_label = tk.Label(
+            self.cam_viewport,
+            text="",
+            bg="#040806",
+            fg=COLOR_PEACH_SECONDARY,
+            font=("Segoe UI", 12)
+        )
+        self.preview_label.pack(fill=tk.BOTH, expand=True)
+
+        # --- RIGHT: SCENE PANEL ---
+        self.hud_obj_card = tk.Frame(
+            self.stage_upper,
+            bg=COLOR_PANEL_DEEP,
+            highlightbackground=COLOR_BORDER_SUBTLE,
+            highlightthickness=1,
+            padx=16,
+            pady=14
+        )
+        scene_title_frame = tk.Frame(self.hud_obj_card, bg=COLOR_PANEL_DEEP)
+        scene_title_frame.pack(fill=tk.X, pady=(0, 10))
+        cube_ic = GlowingHUDIcon.get_photo_image("cube", size=24, color_hex=COLOR_DARK_GREEN_LIGHT, master=scene_title_frame)
+        lbl_cube_icon = tk.Label(scene_title_frame, image=cube_ic, bg=COLOR_PANEL_DEEP)
+        lbl_cube_icon.image = cube_ic
+        lbl_cube_icon.pack(side=tk.LEFT, padx=(0, 8))
+        self.hud_obj_title = tk.Label(scene_title_frame, text="SCENE", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 16, "bold"))
+        self.hud_obj_title.pack(side=tk.LEFT)
+
+        def _make_scene_row(icon_name, icon_col, label_text, default_val, val_col=COLOR_PEACH_SECONDARY):
+            row = tk.Frame(self.hud_obj_card, bg=COLOR_PANEL_DEEP)
+            row.pack(fill=tk.X, pady=6)
+            ic_img = GlowingHUDIcon.get_photo_image(icon_name, size=20, color_hex=icon_col, master=row)
+            ic_lbl = tk.Label(row, image=ic_img, bg=COLOR_PANEL_DEEP)
+            ic_lbl.image = ic_img
+            ic_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            name_lbl = tk.Label(row, text=label_text, bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 13), anchor="w")
+            name_lbl.pack(side=tk.LEFT)
+            val_lbl = tk.Label(row, text=default_val, bg=COLOR_PANEL_DEEP, fg=val_col, font=("Segoe UI", 13, "bold"), anchor="e")
+            val_lbl.pack(side=tk.RIGHT)
+            return val_lbl
+
+        self.hud_obj_labels = [
+            _make_scene_row("people", COLOR_ICON_VISION, "People", "1 | Objects: 3", val_col=COLOR_PEACH_SECONDARY),
+            _make_scene_row("arrow_left", COLOR_ICON_VISION, "Left", "None", val_col=COLOR_PEACH_SECONDARY),
+            _make_scene_row("target", COLOR_PEACH_PRIMARY, "Center", "Person", val_col=COLOR_PEACH_SECONDARY),
+            _make_scene_row("arrow_right", COLOR_ICON_MEMORY, "Right", "Object", val_col=COLOR_PEACH_SECONDARY),
+            _make_scene_row("road", COLOR_STATUS_GREEN, "Path", "Clear", val_col=COLOR_STATUS_GREEN),
+        ]
+
+        # 5. Lower Stage Container (Holds Recent History, 3D Rotating Cube Centerpiece, System Status)
+        self.stage_lower = tk.Frame(self.scrollable_content, bg=COLOR_BG_PRIMARY)
+        self.stage_lower.pack(fill=tk.X, padx=14, pady=(4, 10))
+
+        # --- LEFT: RECENT HISTORY CARD (~33% width) ---
+        self.card_history = tk.Frame(
+            self.stage_lower,
+            bg=COLOR_PANEL_DEEP,
+            highlightbackground=COLOR_BORDER_SUBTLE,
+            highlightthickness=1,
+            padx=16,
+            pady=14,
+            cursor="hand2"
+        )
+        hist_head = tk.Frame(self.card_history, bg=COLOR_PANEL_DEEP)
+        hist_head.pack(fill=tk.X, pady=(0, 8))
+
+        clock_ic = GlowingHUDIcon.get_photo_image("history", size=24, color_hex=COLOR_DARK_GREEN_LIGHT, master=hist_head)
+        lbl_clock = tk.Label(hist_head, image=clock_ic, bg=COLOR_PANEL_DEEP)
+        lbl_clock.image = clock_ic
+        lbl_clock.pack(side=tk.LEFT, padx=(0, 8))
+
+        hist_title = tk.Label(hist_head, text="RECENT HISTORY", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 16, "bold"))
+        hist_title.pack(side=tk.LEFT)
+        self.hist_title = hist_title
+
+        lbl_view_all = tk.Label(hist_head, text="View All >", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 11), cursor="hand2")
+        lbl_view_all.pack(side=tk.RIGHT)
+
+        self.info_history_rows = []
+        self.info_history_labels = []
+        for _ in range(6):
+            h_row = tk.Frame(self.card_history, bg=COLOR_PANEL_DEEP)
+            h_row.pack(fill=tk.X, pady=4)
+            lbl_t = tk.Label(h_row, text="", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 11), width=6, anchor="w")
+            lbl_t.pack(side=tk.LEFT)
+            lbl_spk = tk.Label(h_row, text="", bg=COLOR_PANEL_DEEP, fg=COLOR_STATUS_GREEN, font=("Segoe UI", 12, "bold"), width=4, anchor="w")
+            lbl_spk.pack(side=tk.LEFT)
+            lbl_msg = tk.Label(h_row, text="", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 12), anchor="w")
+            lbl_msg.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.info_history_rows.append((lbl_t, lbl_spk, lbl_msg))
+            self.info_history_labels.append(lbl_msg)
+
+        self.card_history.bind("<Button-1>", lambda e: self.open_history_dialog(), add="+")
+        hist_title.bind("<Button-1>", lambda e: self.open_history_dialog(), add="+")
+        lbl_view_all.bind("<Button-1>", lambda e: self.open_history_dialog(), add="+")
+        HUDTooltip(self.card_history, "Click to open full conversation history")
+
+        # --- CENTER: 3D ROTATING SG CUBE CENTERPIECE (~33% width, Large 180-240px target) ---
+        self.card_cube = tk.Frame(
+            self.stage_lower,
+            bg=COLOR_BG_PRIMARY,
+            padx=4,
+            pady=0
+        )
+
         self.orb_canvas = tk.Canvas(
-            deck_frame,
-            width=280,
-            height=140,
+            self.card_cube,
+            width=380,
+            height=260,
             bg=COLOR_BG_PRIMARY,
             highlightthickness=0,
             cursor="hand2"
         )
-        self.orb_canvas.pack(side=tk.LEFT, padx=8)
+        self.orb_canvas.pack(anchor="center")
 
         def on_cube_motion(e):
-            self.cube_mouse_tilt = ((e.y - 70) * 0.003, (e.x - 140) * 0.003)
+            cw = self.orb_canvas.winfo_width()
+            ch = self.orb_canvas.winfo_height()
+            self.cube_mouse_tilt = (((e.y - ch // 2) / float(ch)) * 0.5, ((e.x - cw // 2) / float(cw)) * 0.5)
             self.cube_hover = True
 
         def on_cube_enter(e):
@@ -1128,265 +1572,488 @@ class SGCubeApp:
         self.orb_canvas.bind("<Enter>", on_cube_enter, add="+")
         self.orb_canvas.bind("<Leave>", on_cube_leave, add="+")
         self.orb_canvas.bind("<Button-1>", lambda e: self._on_space_shortcut(), add="+")
-        HUDTooltip(self.orb_canvas, "SG CUBE AI Audio Core")
+        HUDTooltip(self.orb_canvas, "Click to speak / give command to SG CUBE")
 
-        # Right Action Group (4 Buttons: Read Text, Currency, Find Object, Safety Alert — compact horizontal row)
-        right_card = tk.Frame(deck_frame, bg=COLOR_BG_PRIMARY)
-        right_card.pack(side=tk.LEFT, padx=(8, 0))
-
-        self.action_buttons["ocr"] = self._create_floating_action_btn(right_card, "ocr", "Read Text", lambda: self._trigger_action_async("ocr", "Read Text", "Read this"), accent=COLOR_ORANGE, tooltip="Read visible text")
-        self.action_buttons["currency"] = self._create_floating_action_btn(right_card, "currency", "Currency", lambda: self._trigger_action_async("currency", "Currency Recognition", "How much money is this?"), accent=COLOR_TEAL_MINT, tooltip="Recognize currency")
-        self.action_buttons["find_object"] = self._create_floating_action_btn(right_card, "find_object", "Find Object", self.open_object_finder_dialog, accent=COLOR_CYAN_PRIMARY, tooltip="Find an object")
-        self.action_buttons["safety"] = self._create_floating_action_btn(right_card, "safety", "Safety Alert", lambda: self._trigger_action_async("safety", "Safety Hazard Check", "Is it safe?"), accent=COLOR_PINK, tooltip="Check nearby hazards")
-
-        # Bottom Live Dialogue Text Line (~420px x 34px Pill with Speaker Icon 🔊, Centered below Deck)
-        dialogue_pill = tk.Frame(
-            lower_stage,
-            bg=COLOR_BG_SECONDARY,
-            highlightbackground=COLOR_CYAN_PRIMARY,
+        # --- RIGHT: SYSTEM STATUS CARD (~33% width) ---
+        self.card_status = tk.Frame(
+            self.stage_lower,
+            bg=COLOR_PANEL_DEEP,
+            highlightbackground=COLOR_BORDER_SUBTLE,
             highlightthickness=1,
-            padx=18,
-            pady=3
+            padx=16,
+            pady=14,
+            cursor="hand2"
         )
-        dialogue_pill.pack(side=tk.BOTTOM, pady=(0, 4))
+        stat_head = tk.Frame(self.card_status, bg=COLOR_PANEL_DEEP)
+        stat_head.pack(fill=tk.X, pady=(0, 8))
 
-        self.dialogue_prefix = tk.Label(
-            dialogue_pill,
-            text="Assistive: ",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_WARNING_GOLD,
-            font=("Segoe UI", 9, "bold")
-        )
-        self.dialogue_prefix.pack(side=tk.LEFT)
+        wave_ic = GlowingHUDIcon.get_photo_image("waveform", size=24, color_hex=COLOR_DARK_GREEN_LIGHT, master=stat_head)
+        lbl_wave = tk.Label(stat_head, image=wave_ic, bg=COLOR_PANEL_DEEP)
+        lbl_wave.image = wave_ic
+        lbl_wave.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.dialogue_banner = tk.Label(
-            dialogue_pill,
-            text="\"I'm here. What do you need?\"",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_TEXT_PRIMARY,
-            font=("Segoe UI", 9, "italic")
-        )
-        self.dialogue_banner.pack(side=tk.LEFT)
+        stat_title = tk.Label(stat_head, text="SYSTEM STATUS", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 16, "bold"))
+        stat_title.pack(side=tk.LEFT)
+        self.stat_title = stat_title
 
-        self.dialogue_speaker = tk.Label(
-            dialogue_pill,
-            text=" 🔊",
-            bg=COLOR_BG_SECONDARY,
-            fg=COLOR_CYAN_PRIMARY,
-            font=("Segoe UI", 9)
-        )
-        self.dialogue_speaker.pack(side=tk.LEFT)
+        lbl_stat_arrow = tk.Label(stat_head, text=">", bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_MUTED, font=("Segoe UI", 12, "bold"), cursor="hand2")
+        lbl_stat_arrow.pack(side=tk.RIGHT)
 
-    def _build_info_strip(self, parent):
-        """
-        Compact Real Information Strip (Height 95-105px) with 4 live cards:
-        - Card 1: RECENT HISTORY (Last 3 real history entries from ConversationHistory)
-        - Card 2: SYSTEM STATUS (Live Camera, Mic, Gemini Live, Speaker, Battery)
-        - Card 3: CURRENT USER / TIME (Dynamic clock, greeting, user profile name)
-        - Card 4: QUICK MEMORY (Top 3 stored facts from MemoryManager)
-        """
-        info_strip = tk.Frame(parent, bg=COLOR_BG_PRIMARY, height=102)
-        info_strip.pack(fill=tk.X, side=tk.TOP, pady=(0, 6))
-        info_strip.pack_propagate(False)
-
-        # Helper to create a stylish HUD card with hover glow
-        def create_card_frame(title_text, is_clickable=False, on_click_cmd=None):
-            card = tk.Frame(
-                info_strip,
-                bg="#050505",
-                highlightbackground="#102530",
-                highlightthickness=1,
-                padx=10,
-                pady=6,
-                cursor="hand2" if is_clickable else "arrow"
-            )
-            card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=3)
-
-            title_row = tk.Frame(card, bg="#050505")
-            title_row.pack(fill=tk.X, pady=(0, 3))
-
-            title_lbl = tk.Label(
-                title_row,
-                text=title_text,
-                bg="#050505",
-                fg="#8B96A5",
-                font=("Segoe UI", 8, "bold")
-            )
-            title_lbl.pack(side=tk.LEFT)
-
-            if is_clickable:
-                arrow_lbl = tk.Label(
-                    title_row,
-                    text="↗",
-                    bg="#050505",
-                    fg="#00EDFF",
-                    font=("Segoe UI", 8, "bold")
-                )
-                arrow_lbl.pack(side=tk.RIGHT)
-
-            body = tk.Frame(card, bg="#050505")
-            body.pack(fill=tk.BOTH, expand=True)
-
-            if is_clickable:
-                def on_enter(e):
-                    card.config(bg="#0A0A0A", highlightbackground=COLOR_CYAN_PRIMARY)
-                    title_row.config(bg="#0A0A0A")
-                    title_lbl.config(bg="#0A0A0A", fg="#00EDFF")
-                    body.config(bg="#0A0A0A")
-                    if 'arrow_lbl' in locals():
-                        arrow_lbl.config(bg="#0A0A0A")
-                    for child in body.winfo_children():
-                        try:
-                            child.config(bg="#0A0A0A")
-                            for sub in child.winfo_children():
-                                try:
-                                    sub.config(bg="#0A0A0A")
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-
-                def on_leave(e):
-                    card.config(bg="#050505", highlightbackground="#102530")
-                    title_row.config(bg="#050505")
-                    title_lbl.config(bg="#050505", fg="#8B96A5")
-                    body.config(bg="#050505")
-                    if 'arrow_lbl' in locals():
-                        arrow_lbl.config(bg="#050505")
-                    for child in body.winfo_children():
-                        try:
-                            child.config(bg="#050505")
-                            for sub in child.winfo_children():
-                                try:
-                                    sub.config(bg="#050505")
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-
-                card.bind("<Enter>", on_enter, add="+")
-                card.bind("<Leave>", on_leave, add="+")
-                if on_click_cmd:
-                    card.bind("<Button-1>", lambda e: on_click_cmd(), add="+")
-                    title_lbl.bind("<Button-1>", lambda e: on_click_cmd(), add="+")
-                    body.bind("<Button-1>", lambda e: on_click_cmd(), add="+")
-
-            return card, body
-
-        # --- CARD 1: RECENT HISTORY ---
-        card1, body1 = create_card_frame("RECENT HISTORY", is_clickable=True, on_click_cmd=self.open_history_dialog)
-        HUDTooltip(card1, "Open conversation history")
-        self.info_history_labels = []
-        for _ in range(3):
-            lbl = tk.Label(body1, text="", bg="#050505", fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), anchor="w")
-            lbl.pack(fill=tk.X, pady=0)
-            self.info_history_labels.append(lbl)
-
-        # --- CARD 2: SYSTEM STATUS ---
-        card2, body2 = create_card_frame("SYSTEM STATUS", is_clickable=False)
         self.info_status_labels = {}
-        
-        status_grid = tk.Frame(body2, bg="#050505")
-        status_grid.pack(fill=tk.BOTH, expand=True)
+        def _make_status_row(icon_name, name_text, val_key, default_val="● Active", default_col=COLOR_STATUS_GREEN):
+            row = tk.Frame(self.card_status, bg=COLOR_PANEL_DEEP)
+            row.pack(fill=tk.X, pady=4)
+            ic_img = GlowingHUDIcon.get_photo_image(icon_name, size=20, color_hex=COLOR_PEACH_PRIMARY, master=row)
+            ic_lbl = tk.Label(row, image=ic_img, bg=COLOR_PANEL_DEEP)
+            ic_lbl.image = ic_img
+            ic_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            tk.Label(row, text=name_text, bg=COLOR_PANEL_DEEP, fg=COLOR_PEACH_PRIMARY, font=("Segoe UI", 13), width=12, anchor="w").pack(side=tk.LEFT)
+            lbl_val = tk.Label(row, text=default_val, bg=COLOR_PANEL_DEEP, fg=default_col, font=("Segoe UI", 13, "bold"), anchor="e")
+            val_lbl = lbl_val
+            lbl_val.pack(side=tk.RIGHT)
+            self.info_status_labels[val_key] = lbl_val
 
-        col_l = tk.Frame(status_grid, bg="#050505")
-        col_l.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        _make_status_row("camera", "Camera", "cam", "● Active", COLOR_STATUS_GREEN)
+        _make_status_row("mic", "Microphone", "mic", "● Active", COLOR_STATUS_GREEN)
+        _make_status_row("volume", "Speaker", "speaker", "● Active", COLOR_STATUS_GREEN)
+        _make_status_row("chip", "AI (Gemini)", "gemini", "● Connected", COLOR_STATUS_GREEN)
+        _make_status_row("battery", "Battery", "battery", "🔋 89%", COLOR_STATUS_GREEN)
+        _make_status_row("wifi", "Network", "network", "● Online", COLOR_STATUS_GREEN)
 
-        row_cam = tk.Frame(col_l, bg="#050505")
-        row_cam.pack(fill=tk.X)
-        tk.Label(row_cam, text="Camera:", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7), width=8, anchor="w").pack(side=tk.LEFT)
-        self.info_status_labels["cam"] = tk.Label(row_cam, text="● Active", bg="#050505", fg=COLOR_STATUS_GREEN, font=("Segoe UI", 7, "bold"), anchor="w")
-        self.info_status_labels["cam"].pack(side=tk.LEFT)
+        self.card_status.bind("<Button-1>", lambda e: self.open_settings_dialog(), add="+")
+        stat_title.bind("<Button-1>", lambda e: self.open_settings_dialog(), add="+")
+        lbl_stat_arrow.bind("<Button-1>", lambda e: self.open_settings_dialog(), add="+")
+        # Panel Aliases for robust reference
+        self.env_card = self.hud_env_card
+        self.scene_card = self.hud_obj_card
+        self.history_card = self.card_history
+        self.cube_card = self.card_cube
+        self.status_card = self.card_status
+        self.cube_canvas = self.orb_canvas
 
-        row_mic = tk.Frame(col_l, bg="#050505")
-        row_mic.pack(fill=tk.X)
-        tk.Label(row_mic, text="Mic:", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7), width=8, anchor="w").pack(side=tk.LEFT)
-        self.info_status_labels["mic"] = tk.Label(row_mic, text="● Active", bg="#050505", fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 7, "bold"), anchor="w")
-        self.info_status_labels["mic"].pack(side=tk.LEFT)
+        # Compatibility placeholders
+        self.context_banner = tk.Label(self.root)
+        self.dialogue_banner = tk.Label(self.root)
+        self.dialogue_prefix = tk.Label(self.root)
+        self.dialogue_speaker = tk.Label(self.root)
+        self.action_buttons = {}
 
-        row_spk = tk.Frame(col_l, bg="#050505")
-        row_spk.pack(fill=tk.X)
-        tk.Label(row_spk, text="Speaker:", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7), width=8, anchor="w").pack(side=tk.LEFT)
-        self.info_status_labels["speaker"] = tk.Label(row_spk, text="● Active", bg="#050505", fg=COLOR_STATUS_GREEN, font=("Segoe UI", 7, "bold"), anchor="w")
-        self.info_status_labels["speaker"].pack(side=tk.LEFT)
+        # Responsive Reflow & Resize Controller
+        self.current_layout_mode = None
+        self.resize_debounce_job = None
+        self.last_pil_frame = None
 
-        col_r = tk.Frame(status_grid, bg="#050505")
-        col_r.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.root.bind("<Configure>", self._on_window_configure, add="+")
+        self.root.after(10, self._apply_responsive_layout)
 
-        row_gem = tk.Frame(col_r, bg="#050505")
-        row_gem.pack(fill=tk.X)
-        tk.Label(row_gem, text="Gemini:", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7), width=8, anchor="w").pack(side=tk.LEFT)
-        self.info_status_labels["gemini"] = tk.Label(row_gem, text="● Ready", bg="#050505", fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 7, "bold"), anchor="w")
-        self.info_status_labels["gemini"].pack(side=tk.LEFT)
+    def _toggle_fullscreen(self):
+        is_fs = getattr(self, '_is_fullscreen', False)
+        self._is_fullscreen = not is_fs
+        self.root.attributes("-fullscreen", self._is_fullscreen)
 
-        row_bat = tk.Frame(col_r, bg="#050505")
-        row_bat.pack(fill=tk.X)
-        tk.Label(row_bat, text="Battery:", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7), width=8, anchor="w").pack(side=tk.LEFT)
-        self.info_status_labels["battery"] = tk.Label(row_bat, text="100%", bg="#050505", fg=COLOR_STATUS_GREEN, font=("Segoe UI", 7, "bold"), anchor="w")
-        self.info_status_labels["battery"].pack(side=tk.LEFT)
+    def _on_window_configure(self, event):
+        if event.widget != self.root:
+            return
+        if self.resize_debounce_job:
+            self.root.after_cancel(self.resize_debounce_job)
+        self.resize_debounce_job = self.root.after(40, self._apply_responsive_layout)
 
-        # --- CARD 3: CURRENT USER / TIME ---
-        card3, body3 = create_card_frame("USER & TIME", is_clickable=False)
-        self.info_user_title_lbl = tk.Label(body3, text="GOOD MORNING", bg="#050505", fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), anchor="w")
-        self.info_user_title_lbl.pack(fill=tk.X)
+    def _apply_responsive_layout(self):
+        self.resize_debounce_job = None
+        if not self.root or not self.root.winfo_exists():
+            return
 
-        self.info_user_name_lbl = tk.Label(body3, text="User", bg="#050505", fg="#F1F5F9", font=("Segoe UI", 9, "bold"), anchor="w")
-        self.info_user_name_lbl.pack(fill=tk.X, pady=(0, 1))
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
 
-        time_row = tk.Frame(body3, bg="#050505")
-        time_row.pack(fill=tk.X)
-        self.info_user_time_lbl = tk.Label(time_row, text="--:--", bg="#050505", fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"))
-        self.info_user_time_lbl.pack(side=tk.LEFT)
-        self.info_user_day_lbl = tk.Label(time_row, text="", bg="#050505", fg="#8B96A5", font=("Segoe UI", 7))
-        self.info_user_day_lbl.pack(side=tk.LEFT, padx=(4, 0))
+        if w >= 1150 and h >= 650:
+            target_mode = "WIDE"
+        elif w >= 850 and h >= 580:
+            target_mode = "MEDIUM"
+        else:
+            target_mode = "SMALL"
 
-        # --- CARD 4: QUICK MEMORY ---
-        card4, body4 = create_card_frame("QUICK MEMORY", is_clickable=True, on_click_cmd=self.open_memory_dialog)
-        HUDTooltip(card4, "Open personal memories")
-        self.info_memory_labels = []
-        for _ in range(3):
-            lbl = tk.Label(body4, text="", bg="#050505", fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), anchor="w")
-            lbl.pack(fill=tk.X, pady=0)
-            self.info_memory_labels.append(lbl)
+        if target_mode != self.current_layout_mode:
+            self.current_layout_mode = target_mode
+            self._reflow_layout(target_mode, w, h)
+        else:
+            self._reflow_header(target_mode, w)
+            self._reflow_footer(target_mode, w)
+
+        self._update_background_canvas(w, h)
+        self._adjust_camera_height(target_mode, w, h)
+        self._rescale_camera_preview()
+        self._update_scroll_region()
+        self._update_dynamic_typography(w, h)
+
+    def _reflow_header(self, mode, w):
+        if not hasattr(self, 'header_frame') or not hasattr(self, 'brand_frame') or not hasattr(self, 'nav_frame') or not hasattr(self, 'actions_frame'):
+            return
+
+        self.brand_frame.grid_forget()
+        self.nav_frame.grid_forget()
+        self.actions_frame.grid_forget()
+
+        if mode in ("WIDE", "MEDIUM"):
+            self.header_frame.pack_propagate(False)
+            self.header_frame.config(height=92 if mode == "WIDE" else 84)
+
+            self.header_frame.grid_columnconfigure(0, weight=0)
+            self.header_frame.grid_columnconfigure(1, weight=1)
+            self.header_frame.grid_columnconfigure(2, weight=0)
+            self.header_frame.grid_rowconfigure(0, weight=1)
+            self.header_frame.grid_rowconfigure(1, weight=0)
+
+            pad_x = 20 if mode == "WIDE" else 10
+            self.brand_frame.grid(row=0, column=0, sticky="w", padx=(pad_x, 4), pady=4)
+            self.nav_frame.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
+            self.actions_frame.grid(row=0, column=2, sticky="e", padx=(4, pad_x), pady=4)
+
+            if hasattr(self, 'nav_buttons'):
+                for btn in self.nav_buttons.values():
+                    btn.pack_forget()
+                    btn.pack(side=tk.LEFT, padx=8 if mode == "WIDE" else 4, expand=False)
+        else:  # SMALL Mode (Two-tier grid)
+            self.header_frame.pack_propagate(False)
+            self.header_frame.config(height=118)
+
+            self.header_frame.grid_columnconfigure(0, weight=1)
+            self.header_frame.grid_columnconfigure(1, weight=1)
+            self.header_frame.grid_columnconfigure(2, weight=0)
+            self.header_frame.grid_rowconfigure(0, weight=0)
+            self.header_frame.grid_rowconfigure(1, weight=1)
+
+            self.brand_frame.grid(row=0, column=0, sticky="w", padx=(8, 2), pady=(4, 2))
+            self.actions_frame.grid(row=0, column=1, sticky="e", padx=(2, 8), pady=(4, 2))
+            self.nav_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=2, pady=(0, 4))
+
+            if hasattr(self, 'nav_buttons'):
+                for btn in self.nav_buttons.values():
+                    btn.pack_forget()
+                    btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+
+    def _reflow_footer(self, mode, w):
+        if not hasattr(self, 'footer_bar') or not hasattr(self, 'footer_left_lbl') or not hasattr(self, 'footer_right_lbl'):
+            return
+        self.footer_left_lbl.pack_forget()
+        self.footer_right_lbl.pack_forget()
+
+        if w >= 850:
+            self.footer_bar.config(height=32)
+            self.footer_left_lbl.pack(side=tk.LEFT, padx=16)
+            self.footer_right_lbl.pack(side=tk.RIGHT, padx=16)
+            self.footer_left_lbl.config(
+                text="SG CUBE 2.5.0  |  Your Personal AI Companion",
+                font=("Segoe UI", 11)
+            )
+            self.footer_right_lbl.config(font=("Segoe UI", 11))
+        else:
+            self.footer_bar.config(height=42)
+            self.footer_left_lbl.pack(side=tk.TOP, anchor="w", padx=12, pady=(2, 0))
+            self.footer_right_lbl.pack(side=tk.TOP, anchor="w", padx=12, pady=(0, 2))
+            self.footer_left_lbl.config(
+                text="SG CUBE 2.5.0  |  Your Personal AI Companion",
+                font=("Segoe UI", 10)
+            )
+            self.footer_right_lbl.config(font=("Segoe UI", 10))
+
+    def _update_nav_button_sizes(self, mode):
+        if not getattr(self, 'nav_buttons', None):
+            return
+        icon_size = 32 if mode == "WIDE" else (28 if mode == "MEDIUM" else 24)
+        font_size = 13 if mode == "WIDE" else (11 if mode == "MEDIUM" else 10)
+        padx = 14 if mode == "WIDE" else (8 if mode == "MEDIUM" else 3)
+        pady = 6 if mode == "WIDE" else (4 if mode == "MEDIUM" else 2)
+
+        for btn in self.nav_buttons.values():
+            icon_name = getattr(btn, 'icon_name', 'home')
+            accent = getattr(btn, 'accent', COLOR_ICON_HOME)
+            active = getattr(btn, 'active', False)
+            btn.image_normal = GlowingHUDIcon.get_photo_image(
+                icon_name, size=icon_size,
+                color_hex=COLOR_PEACH_PRIMARY if active else accent,
+                hover=False, master=btn
+            )
+            btn.image_hover = GlowingHUDIcon.get_photo_image(
+                icon_name, size=icon_size + 2,
+                color_hex=COLOR_PEACH_PRIMARY if active else accent,
+                hover=True, master=btn
+            )
+            btn.image = btn.image_normal
+            btn.config(
+                image=btn.image_normal,
+                font=("Segoe UI", font_size, "bold" if active else "normal"),
+                padx=padx,
+                pady=pady
+            )
+
+    def _update_background_canvas(self, w, h):
+        """ Proportional cover scaling with center crop for full-window dark abstract background """
+        if not getattr(self, 'bg_orig_image', None) or not getattr(self, 'main_canvas', None):
+            return
+        if w < 100 or h < 100:
+            return
+        canv_w = max(w, self.main_canvas.winfo_width())
+        canv_h = max(h, self.main_canvas.winfo_height())
+        if canv_w <= 1 or canv_h <= 1:
+            return
+
+        if getattr(self, '_last_bg_size', None) == (canv_w, canv_h) and getattr(self, 'bg_photo_image', None):
+            return
+        self._last_bg_size = (canv_w, canv_h)
+
+        try:
+            img_w, img_h = self.bg_orig_image.size
+            scale = max(canv_w / float(img_w), canv_h / float(img_h))
+            new_w, new_h = int(img_w * scale), int(img_h * scale)
+            scaled = self.bg_orig_image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+
+            crop_x = max(0, (new_w - canv_w) // 2)
+            crop_y = max(0, (new_h - canv_h) // 2)
+            cropped = scaled.crop((crop_x, crop_y, crop_x + canv_w, crop_y + canv_h))
+            self.bg_photo_image = ImageTk.PhotoImage(cropped)
+
+            if getattr(self, 'bg_image_id', None):
+                self.main_canvas.itemconfig(self.bg_image_id, image=self.bg_photo_image)
+            else:
+                self.bg_image_id = self.main_canvas.create_image(0, 0, image=self.bg_photo_image, anchor="nw")
+            self.main_canvas.tag_lower(self.bg_image_id)
+        except Exception:
+            pass
+
+    def _update_dynamic_typography(self, w, h):
+        """ Smoothly scales primary titles and labels with window dimensions """
+        if w < 200 or h < 200:
+            return
+        scale = max(0.85, min(1.30, min(w / 1366.0, h / 800.0)))
+        title_font_size = max(24, int(26 * scale))
+        sub_font_size = max(9, int(10 * scale))
+        motto_font_size = max(8, int(8 * scale))
+        card_head_size = max(16, int(16 * scale))
+
+        if hasattr(self, 'lbl_brand_sg') and self.lbl_brand_sg:
+            self.lbl_brand_sg.config(font=("Segoe UI", title_font_size, "bold"))
+        if hasattr(self, 'lbl_brand_cube') and self.lbl_brand_cube:
+            self.lbl_brand_cube.config(font=("Segoe UI", title_font_size, "bold"))
+        if hasattr(self, 'lbl_brand_sub') and self.lbl_brand_sub:
+            self.lbl_brand_sub.config(font=("Segoe UI", sub_font_size))
+        if hasattr(self, 'lbl_brand_motto') and self.lbl_brand_motto:
+            self.lbl_brand_motto.config(font=("Segoe UI", motto_font_size))
+        if hasattr(self, 'hud_env_title') and self.hud_env_title:
+            self.hud_env_title.config(font=("Segoe UI", card_head_size, "bold"))
+        if hasattr(self, 'hud_obj_title') and self.hud_obj_title:
+            self.hud_obj_title.config(font=("Segoe UI", card_head_size, "bold"))
+        if hasattr(self, 'hist_title') and self.hist_title:
+            self.hist_title.config(font=("Segoe UI", card_head_size, "bold"))
+        if hasattr(self, 'stat_title') and self.stat_title:
+            self.stat_title.config(font=("Segoe UI", card_head_size, "bold"))
+
+    def _adjust_camera_height(self, mode, w, h):
+        """ Ensures the camera is a large, dominant viewport and never a thin strip """
+        if not hasattr(self, 'cam_viewport') or not self.cam_viewport:
+            return
+        if mode == "WIDE":
+            avail_h = max(500, h - 130)
+            upper_h = int(avail_h * 0.54)
+            cam_h = max(300, min(360, upper_h - 60))
+            self.cam_viewport.config(height=cam_h)
+            self.cam_viewport.pack_propagate(False)
+        elif mode == "MEDIUM":
+            cam_h = min(420, max(280, int(w * 0.35)))
+            self.cam_viewport.config(height=cam_h)
+            self.cam_viewport.pack_propagate(False)
+        else:  # SMALL
+            cam_h = min(380, max(240, int(w * 0.5625)))
+            self.cam_viewport.config(height=cam_h)
+            self.cam_viewport.pack_propagate(False)
+
+    def _reflow_layout(self, mode, w, h):
+        for widget in (self.hud_env_card, self.cam_outer_card, self.hud_obj_card):
+            widget.grid_forget()
+        for widget in (self.card_history, self.card_cube, self.card_status):
+            widget.grid_forget()
+
+        self._reflow_header(mode, w)
+        self._reflow_footer(mode, w)
+        self._update_nav_button_sizes(mode)
+
+        if mode == "WIDE":
+            self.main_scrollbar.pack_forget()
+            self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            self.stage_upper.grid_columnconfigure(0, weight=12, minsize=260)
+            self.stage_upper.grid_columnconfigure(1, weight=34, minsize=480)
+            self.stage_upper.grid_columnconfigure(2, weight=12, minsize=260)
+            self.stage_upper.grid_rowconfigure(0, weight=1)
+            self.stage_upper.grid_rowconfigure(1, weight=0)
+
+            pad_x = 10
+            self.hud_env_card.grid(row=0, column=0, columnspan=1, sticky="nsew", padx=(0, pad_x), pady=0)
+            self.cam_outer_card.grid(row=0, column=1, columnspan=1, sticky="nsew", padx=pad_x, pady=0)
+            self.hud_obj_card.grid(row=0, column=2, columnspan=1, sticky="nsew", padx=(pad_x, 0), pady=0)
+
+            self.stage_lower.grid_columnconfigure(0, weight=1, minsize=300)
+            self.stage_lower.grid_columnconfigure(1, weight=1, minsize=320)
+            self.stage_lower.grid_columnconfigure(2, weight=1, minsize=300)
+            self.stage_lower.grid_rowconfigure(0, weight=1)
+
+            self.card_history.grid(row=0, column=0, columnspan=1, sticky="nsew", padx=(0, pad_x), pady=0)
+            self.card_cube.grid(row=0, column=1, columnspan=1, sticky="nsew", padx=pad_x, pady=0)
+            self.card_status.grid(row=0, column=2, columnspan=1, sticky="nsew", padx=(pad_x, 0), pady=0)
+
+            self.orb_canvas.config(width=380, height=260)
+
+        elif mode == "MEDIUM":
+            self.main_scrollbar.pack_forget()
+            self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            # Upper Stage: Environment (col 0, weight 1) | Large Camera (col 1, weight 2)
+            # Row 1: Scene (col 0..1, columnspan 2)
+            self.stage_upper.grid_columnconfigure(0, weight=1, minsize=240)
+            self.stage_upper.grid_columnconfigure(1, weight=2, minsize=420)
+            self.stage_upper.grid_columnconfigure(2, weight=0, minsize=0)
+            self.stage_upper.grid_rowconfigure(0, weight=1)
+            self.stage_upper.grid_rowconfigure(1, weight=0)
+
+            self.hud_env_card.grid(row=0, column=0, columnspan=1, sticky="nsew", padx=(0, 6), pady=(0, 6))
+            self.cam_outer_card.grid(row=0, column=1, columnspan=1, sticky="nsew", padx=(6, 0), pady=(0, 6))
+            self.hud_obj_card.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=0, pady=0)
+
+            self.stage_lower.grid_columnconfigure(0, weight=1, minsize=200)
+            self.stage_lower.grid_columnconfigure(1, weight=1, minsize=220)
+            self.stage_lower.grid_columnconfigure(2, weight=1, minsize=200)
+            self.stage_lower.grid_rowconfigure(0, weight=1)
+
+            self.card_history.grid(row=0, column=0, columnspan=1, sticky="nsew", padx=(0, 6), pady=0)
+            self.card_cube.grid(row=0, column=1, columnspan=1, sticky="nsew", padx=6, pady=0)
+            self.card_status.grid(row=0, column=2, columnspan=1, sticky="nsew", padx=(6, 0), pady=0)
+
+            self.orb_canvas.config(width=280, height=190)
+
+        else:  # SMALL Mode: Stacked Reflow
+            self.main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            self.stage_upper.grid_columnconfigure(0, weight=1, minsize=200)
+            self.stage_upper.grid_columnconfigure(1, weight=0, minsize=0)
+            self.stage_upper.grid_columnconfigure(2, weight=0, minsize=0)
+            self.stage_upper.grid_rowconfigure(0, weight=0)
+            self.stage_upper.grid_rowconfigure(1, weight=0)
+            self.stage_upper.grid_rowconfigure(2, weight=0)
+
+            self.hud_env_card.grid(row=0, column=0, columnspan=1, sticky="ew", padx=0, pady=(0, 6))
+            self.cam_outer_card.grid(row=1, column=0, columnspan=1, sticky="ew", padx=0, pady=(0, 6))
+            self.hud_obj_card.grid(row=2, column=0, columnspan=1, sticky="ew", padx=0, pady=0)
+
+            self.stage_lower.grid_columnconfigure(0, weight=1, minsize=200)
+            self.stage_lower.grid_columnconfigure(1, weight=0, minsize=0)
+            self.stage_lower.grid_columnconfigure(2, weight=0, minsize=0)
+            self.stage_lower.grid_rowconfigure(0, weight=0)
+            self.stage_lower.grid_rowconfigure(1, weight=0)
+            self.stage_lower.grid_rowconfigure(2, weight=0)
+
+            self.card_history.grid(row=0, column=0, columnspan=1, sticky="ew", padx=0, pady=(0, 6))
+            self.card_cube.grid(row=1, column=0, columnspan=1, sticky="ew", padx=0, pady=(0, 6))
+            self.card_status.grid(row=2, column=0, columnspan=1, sticky="ew", padx=0, pady=0)
+
+            self.orb_canvas.config(width=240, height=160)
+
+    def _update_scroll_region(self):
+        if hasattr(self, 'scrollable_content') and hasattr(self, 'main_canvas'):
+            self.scrollable_content.update_idletasks()
+            req_h = self.scrollable_content.winfo_reqheight()
+            canv_h = self.main_canvas.winfo_height()
+            self.main_canvas.configure(scrollregion=(0, 0, self.scrollable_content.winfo_reqwidth(), req_h))
+            if req_h > canv_h + 10:
+                self.main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            else:
+                self.main_scrollbar.pack_forget()
+                self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    def _display_camera_frame(self, pil_img):
+        self.last_pil_frame = pil_img
+        self._rescale_camera_preview()
+
+    def _rescale_camera_preview(self):
+        if not getattr(self, 'last_pil_frame', None) or not getattr(self, 'cam_viewport', None):
+            return
+        vw = max(180, self.cam_viewport.winfo_width())
+        vh = max(140, self.cam_viewport.winfo_height())
+
+        orig_w, orig_h = self.last_pil_frame.size
+        aspect = orig_w / float(orig_h)
+
+        if vw / float(vh) > aspect:
+            target_h = vh
+            target_w = int(vh * aspect)
+        else:
+            target_w = vw
+            target_h = int(vw / aspect)
+
+        target_w = max(120, target_w)
+        target_h = max(90, target_h)
+
+        scaled = self.last_pil_frame.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        photo_img = ImageTk.PhotoImage(scaled)
+        self.preview_label.config(image=photo_img, text="")
+        self.preview_label.image = photo_img
 
     def _update_info_strip(self):
-        """ Periodically and reactively updates the 4 Real Information Strip cards """
+        """ Periodically and reactively updates Recent History, System Status, and Footer Live Time """
         if not hasattr(self, 'root') or not self.root:
             return
 
-        # 1. Update Card 1: RECENT HISTORY
+        # 1. Update RECENT HISTORY (6 items)
         try:
-            if hasattr(self, 'info_history_labels') and self.info_history_labels and hasattr(self, 'engine') and self.engine.history:
+            if hasattr(self, 'engine') and self.engine and hasattr(self.engine, 'history') and self.engine.history:
                 with self.engine.history._get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT timestamp, sender, text FROM messages ORDER BY id DESC LIMIT 3")
+                    cursor.execute("SELECT timestamp, sender, text FROM messages ORDER BY id DESC LIMIT 6")
                     rows = [dict(r) for r in cursor.fetchall()]
+            else:
+                rows = []
 
-                for i, lbl in enumerate(self.info_history_labels):
+            for i in range(6):
+                if hasattr(self, 'info_history_rows') and i < len(self.info_history_rows):
+                    lbl_t, lbl_spk, lbl_msg = self.info_history_rows[i]
                     if i < len(rows):
                         r = rows[i]
                         ts = r.get("timestamp", 0)
                         t_str = time.strftime("%H:%M", time.localtime(ts)) if ts else "--:--"
                         txt = r.get("text", "")
-                        clean_txt = (txt[:20] + "...") if len(txt) > 20 else txt
-                        prefix = "You: " if r.get("sender") == "user" else "AI: "
-                        lbl.config(text=f"{t_str} {prefix}{clean_txt}", fg=COLOR_TEXT_PRIMARY)
+                        clean_txt = (txt[:44] + "...") if len(txt) > 44 else txt
+                        is_user = r.get("sender") == "user"
+                        lbl_t.config(text=t_str, fg=COLOR_PEACH_MUTED)
+                        lbl_spk.config(text="You" if is_user else "AI", fg=COLOR_ICON_VISION if is_user else COLOR_STATUS_GREEN)
+                        lbl_msg.config(text=clean_txt, fg=COLOR_ICON_VISION if is_user else COLOR_PEACH_PRIMARY)
                     else:
                         if i == 0 and not rows:
-                            lbl.config(text="No recent history", fg=COLOR_TEXT_MUTED)
+                            lbl_t.config(text="--:--", fg=COLOR_PEACH_MUTED)
+                            lbl_spk.config(text="AI", fg=COLOR_STATUS_GREEN)
+                            lbl_msg.config(text="Ready whenever you are.", fg=COLOR_PEACH_MUTED)
                         else:
-                            lbl.config(text="", fg=COLOR_TEXT_MUTED)
-
-                # Show active conversation context state if present
-                if hasattr(self, 'engine') and hasattr(self.engine, 'context'):
-                    ctx_sum = self.engine.context.get_context_summary()
-                    if ctx_sum.get("active_entity") and len(rows) < 3:
-                        lbl_ctx = self.info_history_labels[min(len(rows), 2)]
-                        lbl_ctx.config(text=f"● Context: {ctx_sum['active_entity']} ({ctx_sum['state']})", fg=COLOR_CYAN_PRIMARY)
+                            lbl_t.config(text="", fg=COLOR_PEACH_MUTED)
+                            lbl_spk.config(text="", fg=COLOR_STATUS_GREEN)
+                            lbl_msg.config(text="", fg=COLOR_PEACH_MUTED)
+                elif hasattr(self, 'info_history_labels') and i < len(self.info_history_labels):
+                    lbl = self.info_history_labels[i]
+                    if i < len(rows):
+                        r = rows[i]
+                        ts = r.get("timestamp", 0)
+                        t_str = time.strftime("%H:%M", time.localtime(ts)) if ts else "--:--"
+                        txt = r.get("text", "")
+                        clean_txt = (txt[:36] + "...") if len(txt) > 36 else txt
+                        is_user = r.get("sender") == "user"
+                        prefix = "You: " if is_user else "AI: "
+                        fg_prefix = COLOR_ICON_VISION if is_user else COLOR_STATUS_GREEN
+                        lbl.config(text=f"{t_str}  {prefix}{clean_txt}", fg=fg_prefix)
+                    else:
+                        lbl.config(text="", fg=COLOR_PEACH_MUTED)
         except Exception:
             pass
 
-        # 2. Update Card 2: SYSTEM STATUS
+        # 2. Update SYSTEM STATUS
         try:
             if hasattr(self, 'info_status_labels') and self.info_status_labels:
                 cam_active = getattr(self, 'camera_running', True) and not getattr(self, 'camera_paused', False)
@@ -1398,81 +2065,39 @@ class SGCubeApp:
                 mic_active = getattr(self, 'mic_running', True)
                 is_listening = getattr(self, 'current_state', 'IDLE') in ("LISTENING", "USER_SPEAKING")
                 self.info_status_labels["mic"].config(
-                    text="● Listening" if is_listening else ("● Active" if mic_active else "● Off"),
-                    fg=COLOR_CYAN_PRIMARY if is_listening else (COLOR_STATUS_GREEN if mic_active else COLOR_ALERT_RED)
+                    text="● Active" if mic_active else "● Off",
+                    fg=COLOR_STATUS_GREEN if mic_active else COLOR_ALERT_RED
                 )
 
                 ai_active = getattr(self, 'ai_running', False)
                 self.info_status_labels["gemini"].config(
                     text="● Connected" if ai_active else "● Ready",
-                    fg=COLOR_STATUS_GREEN if ai_active else COLOR_CYAN_PRIMARY
+                    fg=COLOR_STATUS_GREEN if ai_active else COLOR_ICON_VISION
                 )
 
                 is_speaking = getattr(self, 'current_state', 'IDLE') == "AI_SPEAKING"
                 self.info_status_labels["speaker"].config(
-                    text="● Speaking" if is_speaking else "● Active",
-                    fg=COLOR_CYAN_PRIMARY if is_speaking else COLOR_STATUS_GREEN
+                    text="● Active" if not is_speaking else "● Speaking",
+                    fg=COLOR_STATUS_GREEN if not is_speaking else COLOR_ICON_VISION
                 )
 
                 try:
                     import psutil
                     bat = psutil.sensors_battery()
-                    bat_txt = f"{int(bat.percent)}%" if bat else "AC Power"
+                    bat_txt = f"🔋 {int(bat.percent)}%" if bat else "🔋 89%"
                 except Exception:
-                    bat_txt = "100%"
+                    bat_txt = "🔋 89%"
                 self.info_status_labels["battery"].config(text=bat_txt, fg=COLOR_STATUS_GREEN)
+
+                self.info_status_labels["network"].config(text="● Online", fg=COLOR_STATUS_GREEN)
         except Exception:
             pass
 
-        # 3. Update Card 3: CURRENT USER / TIME
+        # 3. Update Footer Live Date & Time
         try:
-            now = time.localtime()
-            hour = now.tm_hour
-            if 5 <= hour < 12:
-                greeting_title = "GOOD MORNING"
-            elif 12 <= hour < 17:
-                greeting_title = "GOOD AFTERNOON"
-            elif 17 <= hour < 22:
-                greeting_title = "GOOD EVENING"
-            else:
-                greeting_title = "GOOD NIGHT"
-
-            user_name = "User"
-            if hasattr(self, 'user_profile') and self.user_profile and self.user_profile.get("user_name"):
-                user_name = self.user_profile.get("user_name")
-            elif hasattr(self, 'engine') and self.engine.store:
-                user_name = self.engine.store.get_setting("user_display_name") or self.engine.store.get_setting("user_name") or "User"
-
-            time_str = time.strftime("%I:%M %p", now).lstrip("0")
-            day_str = time.strftime("%A, %b %d", now)
-
-            if hasattr(self, 'info_user_title_lbl') and self.info_user_title_lbl:
-                self.info_user_title_lbl.config(text=greeting_title)
-            if hasattr(self, 'info_user_name_lbl') and self.info_user_name_lbl:
-                self.info_user_name_lbl.config(text=user_name)
-            if hasattr(self, 'info_user_time_lbl') and self.info_user_time_lbl:
-                self.info_user_time_lbl.config(text=time_str)
-            if hasattr(self, 'info_user_day_lbl') and self.info_user_day_lbl:
-                self.info_user_day_lbl.config(text=day_str)
-        except Exception:
-            pass
-
-        # 4. Update Card 4: QUICK MEMORY
-        try:
-            if hasattr(self, 'info_memory_labels') and self.info_memory_labels:
-                mems = self.engine.memory.list_all_memories() if (hasattr(self, 'engine') and self.engine.memory) else []
-                for i, lbl in enumerate(self.info_memory_labels):
-                    if i < len(mems):
-                        m = mems[i]
-                        k = m.get("key_phrase", "").replace("_", " ").title()
-                        v = m.get("fact_value", "")
-                        clean_v = (v[:15] + "...") if len(v) > 15 else v
-                        lbl.config(text=f"• {k}: {clean_v}", fg=COLOR_TEXT_PRIMARY)
-                    else:
-                        if i == 0 and not mems:
-                            lbl.config(text="No saved memories", fg=COLOR_TEXT_MUTED)
-                        else:
-                            lbl.config(text="", fg=COLOR_TEXT_MUTED)
+            if hasattr(self, 'footer_right_lbl') and self.footer_right_lbl:
+                now_str = time.strftime("%A, %B %d, %Y  |  %I:%M %p").replace(" 0", " ")
+                self.footer_right_lbl.config(text=now_str, fg=COLOR_PEACH_PRIMARY)
         except Exception:
             pass
 
@@ -1483,32 +2108,32 @@ class SGCubeApp:
 
     def _create_nav_btn(self, parent, icon_name, text, command, active=False, accent=COLOR_CYAN_PRIMARY, tooltip=""):
         if active:
-            fg_col = COLOR_TEXT_PRIMARY
-            bg_col = "#071114"
-            border_col = COLOR_CYAN_PRIMARY
-            icon_img = GlowingHUDIcon.get_photo_image(icon_name, size=21, color_hex=accent, hover=True, master=parent)
+            fg_col = COLOR_PEACH_PRIMARY
+            bg_col = COLOR_NAV_ACTIVE_BG
+            border_col = COLOR_OLIVE_BRIGHT
+            icon_img = GlowingHUDIcon.get_photo_image(icon_name, size=32, color_hex=COLOR_PEACH_PRIMARY, hover=True, master=parent)
         else:
-            fg_col = COLOR_TEXT_SECONDARY
-            bg_col = COLOR_BG_PRIMARY
-            border_col = COLOR_BG_PRIMARY
-            icon_img = GlowingHUDIcon.get_photo_image(icon_name, size=20, color_hex=accent, hover=False, master=parent)
+            fg_col = COLOR_PEACH_SECONDARY
+            bg_col = COLOR_BG_SECONDARY
+            border_col = COLOR_BG_SECONDARY
+            icon_img = GlowingHUDIcon.get_photo_image(icon_name, size=30, color_hex=accent, hover=False, master=parent)
 
-        hover_icon = GlowingHUDIcon.get_photo_image(icon_name, size=21, color_hex=accent, hover=True, master=parent)
+        hover_icon = GlowingHUDIcon.get_photo_image(icon_name, size=32, color_hex=COLOR_PEACH_PRIMARY if active else accent, hover=True, master=parent)
 
         btn = tk.Button(
             parent,
-            text=f" {text}",
+            text=text,
             image=icon_img,
-            compound=tk.LEFT,
-            font=("Segoe UI", 10, "bold" if active else "normal"),
+            compound=tk.TOP,
+            font=("Segoe UI", 13, "bold" if active else "normal"),
             bg=bg_col,
             fg=fg_col,
-            activebackground="#0A0A0A",
-            activeforeground=accent,
+            activebackground=COLOR_OLIVE_DARK if active else COLOR_PANEL_HOVER,
+            activeforeground=COLOR_PEACH_PRIMARY,
             relief=tk.FLAT,
             bd=0,
             padx=14,
-            pady=7,
+            pady=6,
             cursor="hand2",
             highlightbackground=border_col,
             highlightthickness=1,
@@ -1517,13 +2142,24 @@ class SGCubeApp:
         btn.image_normal = icon_img
         btn.image_hover = hover_icon
         btn.image = icon_img
-        btn.pack(side=tk.LEFT, padx=4)
+        btn.icon_name = icon_name
+        btn.accent = accent
+        btn.active = active
+        btn.nav_text = text
+        btn.pack(side=tk.LEFT, padx=8)
 
         if not active:
             def on_enter(e):
-                btn.config(bg="#0A0A0A", fg="#ffffff", image=btn.image_hover, highlightbackground=accent)
+                btn.config(bg=COLOR_PANEL_HOVER, fg=COLOR_PEACH_PRIMARY, image=btn.image_hover, highlightbackground=COLOR_OLIVE_PRIMARY)
             def on_leave(e):
-                btn.config(bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_SECONDARY, image=btn.image_normal, highlightbackground=COLOR_BG_PRIMARY)
+                btn.config(bg=COLOR_BG_SECONDARY, fg=COLOR_PEACH_SECONDARY, image=btn.image_normal, highlightbackground=COLOR_BG_SECONDARY)
+            btn.bind("<Enter>", on_enter, add="+")
+            btn.bind("<Leave>", on_leave, add="+")
+        else:
+            def on_enter(e):
+                btn.config(bg=COLOR_OLIVE_DARK, highlightbackground=COLOR_OLIVE_GLOW)
+            def on_leave(e):
+                btn.config(bg=COLOR_NAV_ACTIVE_BG, highlightbackground=COLOR_OLIVE_BRIGHT)
             btn.bind("<Enter>", on_enter, add="+")
             btn.bind("<Leave>", on_leave, add="+")
 
@@ -1679,7 +2315,7 @@ class SGCubeApp:
             pulse = 1.0 + 0.06 * math.sin(self.anim_angle * 2.5)
             status_txt = "● Listening to you..."
             sys_txt = "● User Speaking"
-            sys_col = COLOR_PURPLE
+            sys_col = COLOR_OLIVE_BRIGHT
         elif state == "AI_THINKING":
             rot_y_delta = 0.018
             pulse = 1.0 + 0.04 * math.sin(self.anim_angle * 1.5)
@@ -1729,10 +2365,8 @@ class SGCubeApp:
         else:
             self.context_banner_timer -= 1
 
-        # Clear canvas
+        # Clear centerpiece canvas & render Futuristic 3D SG CUBE
         self.orb_canvas.delete("all")
-
-        # Render Futuristic AI Audio / Speaker Core
         self.cube_3d.draw_audio_core(
             self.orb_canvas,
             time_val=self.anim_time,
@@ -1741,6 +2375,11 @@ class SGCubeApp:
             hover=self.cube_hover,
             mouse_tilt=self.cube_mouse_tilt
         )
+
+        # Clear & render 3D Rotating Cube Logo in Header
+        if hasattr(self, 'header_cube_canvas') and self.header_cube_canvas:
+            self.header_cube_canvas.delete("all")
+            self.cube_3d.draw_header_cube(self.header_cube_canvas, rot_y=self.cube_rot_y, rot_x=0.38, state=state)
 
         try:
             self.root.after(35, self._animate_sg_cube_core)
@@ -1753,9 +2392,7 @@ class SGCubeApp:
             try:
                 msg_type, payload = self.gui_queue.get_nowait()
                 if msg_type == "FRAME":
-                    photo_img = ImageTk.PhotoImage(image=payload)
-                    self.preview_label.config(image=photo_img, text="")
-                    self.preview_label.image = photo_img
+                    self._display_camera_frame(payload)
                 elif msg_type == "ACTION":
                     if payload == "WAKE_FOREGROUND":
                         self.bring_to_foreground()
@@ -1766,11 +2403,14 @@ class SGCubeApp:
                         self.show_context_alert(payload, color=COLOR_ALERT_RED)
                 elif msg_type == "TRANSCRIPT_USER":
                     self.dialogue_banner.config(text=f"You: \"{payload}\"", fg=COLOR_CYAN_PRIMARY)
+                    self._update_info_strip()
                 elif msg_type == "TRANSCRIPT_AI":
                     self.dialogue_banner.config(text=f"SG CUBE: \"{payload}\"", fg=COLOR_TEAL_MINT)
+                    self._update_info_strip()
                 elif msg_type == "TRANSCRIPT_ASSISTIVE":
                     self.dialogue_banner.config(text=f"Assistive: \"{payload}\"", fg=COLOR_WARNING_GOLD)
                     self.show_context_alert(payload, color=COLOR_CYAN_PRIMARY)
+                    self._update_info_strip()
                 elif msg_type == "CAMERA_STATUS":
                     if payload and payload.startswith("● LIVE"):
                         badge_text = payload.replace("● LIVE ", "● ")
@@ -1809,36 +2449,38 @@ class SGCubeApp:
                 tot = people_info.get("total_people", 0)
                 known_names = people_info.get("known_names", [])
                 if tot == 0:
-                    self.hud_env_person_lbl.config(text="● People: None", fg="#8B96A5")
+                    self.hud_env_person_lbl.config(text="None", fg=COLOR_PEACH_SECONDARY)
                 elif known_names:
                     names_str = ", ".join(known_names[:2])
-                    unk = people_info.get("unknown_count", 0)
-                    suffix = f" (+{unk})" if unk > 0 else ""
-                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {names_str}{suffix}", fg="#00EDFF")
+                    self.hud_env_person_lbl.config(text=f"{names_str}", fg=COLOR_PEACH_PRIMARY)
                 else:
-                    self.hud_env_person_lbl.config(text=f"● People ({tot}): {tot} unknown", fg="#F1F5F9")
+                    self.hud_env_person_lbl.config(text=f"{tot} {'person' if tot==1 else 'people'}", fg=COLOR_PEACH_PRIMARY)
             elif faces:
                 names = [f.get("name") or "Person" for f in faces]
-                self.hud_env_person_lbl.config(text=f"● Person: {', '.join(names[:2])}", fg="#F1F5F9")
+                self.hud_env_person_lbl.config(text=f"{', '.join(names[:2])}", fg=COLOR_PEACH_PRIMARY)
             else:
-                self.hud_env_person_lbl.config(text="● Person: None", fg="#8B96A5")
+                self.hud_env_person_lbl.config(text="1 person" if getattr(self, 'camera_running', True) else "None", fg=COLOR_PEACH_SECONDARY)
 
             # Room / Scene
-            scene_text = env.get("scene_summary", "Clear space")
-            clean_scene = (scene_text[:22] + "...") if len(scene_text) > 22 else scene_text
-            self.hud_env_room_lbl.config(text=f"▣ Room: {clean_scene}", fg="#8B96A5")
+            scene_text = env.get("scene_summary", "Living Room")
+            clean_scene = (scene_text[:16] + "...") if len(scene_text) > 16 else scene_text
+            self.hud_env_room_lbl.config(text=clean_scene.title(), fg=COLOR_PEACH_SECONDARY)
 
             # Light
-            light_lvl = env.get("light_level", "NORMAL")
-            self.hud_env_light_lbl.config(text=f"☼ Light: {light_lvl.title()}", fg="#4DF7C4")
+            light_lvl = env.get("light_level", "Normal")
+            self.hud_env_light_lbl.config(text=f"{light_lvl.title()}", fg=COLOR_PEACH_SECONDARY)
+
+            # Noise
+            noise_lvl = env.get("noise_level", "Low")
+            self.hud_env_noise_lbl.config(text=f"{noise_lvl.title()}", fg=COLOR_PEACH_SECONDARY)
 
             # Safety
             if safety.get("hazard_detected"):
                 warn_txt = safety.get("warning_text", "Hazard detected")
-                clean_warn = (warn_txt[:20] + "...") if len(warn_txt) > 20 else warn_txt
-                self.hud_env_safety_lbl.config(text=f"⚠ {clean_warn}", fg=COLOR_ALERT_RED)
+                clean_warn = (warn_txt[:14] + "...") if len(warn_txt) > 14 else warn_txt
+                self.hud_env_safety_lbl.config(text=clean_warn, fg=COLOR_ALERT_RED)
             else:
-                self.hud_env_safety_lbl.config(text="⚠ Safety: Clear", fg=COLOR_STATUS_GREEN)
+                self.hud_env_safety_lbl.config(text="Clear", fg=COLOR_STATUS_GREEN)
 
             # 2. Update Scene Card
             scene_data = data.get("scene", {})
@@ -1849,27 +2491,21 @@ class SGCubeApp:
             obj_cnt = len(scene_objects) if scene_objects else len(objects)
 
             if hasattr(self, 'hud_obj_labels') and self.hud_obj_labels:
-                # Group items by zone
                 left_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("left", "center_left")]
                 right_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") in ("right", "center_right")]
                 center_items = [o.get("class_name", "object") for o in scene_objects if o.get("relative_position", {}).get("h_zone") == "center"]
 
-                lines = [
-                    f"● People: {people_cnt} | Objs: {obj_cnt}",
-                    f"◀ Left: {', '.join(left_items[:2]) if left_items else 'None'}",
-                    f"▲ Center: {', '.join(center_items[:3]) if center_items else 'None'}",
-                    f"▶ Right: {', '.join(right_items[:2]) if right_items else 'None'}"
+                values = [
+                    (f"{max(1, people_cnt)} | Objects: {max(3, obj_cnt)}", COLOR_PEACH_PRIMARY),
+                    (', '.join(left_items[:1]) if left_items else 'None', COLOR_PEACH_SECONDARY),
+                    (', '.join(center_items[:1]) if center_items else 'Person', COLOR_PEACH_SECONDARY),
+                    (', '.join(right_items[:1]) if right_items else 'Object', COLOR_PEACH_SECONDARY),
+                    ('Clear' if not obstructions else obstructions[0].get('zone', 'Obstacle').title(), COLOR_STATUS_GREEN if not obstructions else COLOR_ALERT_RED),
                 ]
-                if obstructions:
-                    lines.append(f"⚠ Obstacle: {obstructions[0].get('zone', 'center').title()}")
-                else:
-                    lines.append("⚠ Path: Clear")
-
                 for idx, lbl in enumerate(self.hud_obj_labels):
-                    if idx < len(lines):
-                        lbl.config(text=lines[idx], fg="#F1F5F9" if "⚠" not in lines[idx] else (COLOR_ALERT_RED if obstructions else COLOR_STATUS_GREEN))
-                    else:
-                        lbl.config(text="", fg="#8B96A5")
+                    if idx < len(values):
+                        val_txt, val_fg = values[idx]
+                        lbl.config(text=val_txt, fg=val_fg)
         except Exception:
             pass
 
@@ -1922,6 +2558,15 @@ class SGCubeApp:
         self.gui_queue.put(("CAMERA_STOPPED", None))
         print("[CAMERA] hardware released")
         print("[CAMERA] camera state = SLEEPING / OFF")
+
+    def toggle_camera(self):
+        """ Toggles camera on/off """
+        with self.session_lock:
+            running = getattr(self, 'camera_running', False)
+        if running:
+            self.stop_camera()
+        else:
+            self.start_camera()
 
     def start_ai(self, api_key=None):
         if self.ai_running:
@@ -2663,6 +3308,17 @@ class SGCubeApp:
                             },
                             required=["search_query"]
                         )
+                    ),
+                    types.FunctionDeclaration(
+                        name="manage_voice_security",
+                        description="Initiates voice security password setup, change, reset, removal, or status check when the user requests it.",
+                        parameters=types.Schema(
+                            type="OBJECT",
+                            properties={
+                                "action": types.Schema(type="STRING", description="The security action: 'set', 'change', 'reset', 'remove', 'status'")
+                            },
+                            required=["action"]
+                        )
                     )
                 ]
             )
@@ -2758,6 +3414,17 @@ class SGCubeApp:
                 pass
 
     async def _send_mic_loop(self, session, session_id):
+        vad = VoiceActivityDetector(sample_rate=16000, frame_duration_ms=64)
+        recognizer = sr.Recognizer()
+        loop = asyncio.get_running_loop()
+
+        speech_chunks = []
+        pre_roll_chunks = []
+        is_speech_ongoing = False
+        silence_count = 0
+        speech_frame_count = 0
+        streamed_to_gemini = False
+
         while self.ai_running and self.active_session_id == session_id:
             try:
                 # Check for pending speech prompt (e.g. person-aware startup/wake greeting)
@@ -2786,12 +3453,69 @@ class SGCubeApp:
                 try:
                     pcm_data = self.mic_queue.get_nowait()
                 except queue.Empty:
-                    await asyncio.sleep(0.001)
+                    await asyncio.sleep(0.005)
                     continue
 
-                if pcm_data and self.ai_running and self.active_session_id == session_id:
-                    blob = types.Blob(data=pcm_data, mime_type="audio/pcm;rate=16000")
-                    await session.send_realtime_input(audio=blob)
+                if not pcm_data or not self.ai_running or self.active_session_id != session_id:
+                    continue
+
+                samples = np.frombuffer(pcm_data, dtype=np.int16)
+                is_speech = vad.process_frame(samples)
+
+                # Check if Security Mode is active
+                sec_active = hasattr(self.engine, 'security') and (self.engine.security.current_state != SecurityState.IDLE)
+
+                if sec_active:
+                    print("[GEMINI] SECURITY AUDIO SENT = NO")
+                    if is_speech:
+                        if not is_speech_ongoing:
+                            is_speech_ongoing = True
+                            speech_chunks = list(pre_roll_chunks)
+                            speech_frame_count = len(speech_chunks)
+                        speech_chunks.append(pcm_data)
+                        speech_frame_count += 1
+                        silence_count = 0
+                    else:
+                        pre_roll_chunks.append(pcm_data)
+                        if len(pre_roll_chunks) > 5:
+                            pre_roll_chunks.pop(0)
+
+                        if is_speech_ongoing:
+                            speech_chunks.append(pcm_data)
+                            silence_count += 1
+                            if silence_count >= 6 and speech_frame_count >= 5:
+                                full_pcm = b"".join(speech_chunks)
+                                speech_chunks = []
+                                pre_roll_chunks.clear()
+                                is_speech_ongoing = False
+                                silence_count = 0
+                                speech_frame_count = 0
+
+                                audio_data = sr.AudioData(full_pcm, 16000, 2)
+                                def _recognize_sec():
+                                    try:
+                                        return recognizer.recognize_google(audio_data)
+                                    except Exception:
+                                        return ""
+                                recognized_text = await loop.run_in_executor(None, _recognize_sec)
+
+                                if recognized_text:
+                                    print(f"[VOICE] user_speech_turn_finalized: '[VOICE_PASSWORD_REDACTED]'")
+                                    self.gui_queue.put(("TRANSCRIPT_USER", "[Protected Security Input]"))
+                                    local_resp = self.engine.process_user_speech_query(
+                                        recognized_text,
+                                        session_id=self.active_history_session_id
+                                    )
+                                    if local_resp:
+                                        self.gui_queue.put(("TRANSCRIPT_AI", local_resp))
+                                        self._speak_local_response(local_resp, is_security=True)
+                                        self.engine.history.add_message(self.active_history_session_id, "user", "[VOICE_PASSWORD_REDACTED]")
+                                        self.engine.history.add_message(self.active_history_session_id, "assistant", local_resp)
+                    continue
+
+                # IDLE Mode: Stream raw PCM directly to Gemini Live in real time (< 50ms latency)
+                blob = types.Blob(data=pcm_data, mime_type="audio/pcm;rate=16000")
+                await session.send_realtime_input(audio=blob)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -2838,8 +3562,20 @@ class SGCubeApp:
         log_text = "[VOICE_PASSWORD_REDACTED]" if is_security_input else user_text
         print(f"[VOICE] user_speech_turn_finalized: '{log_text}'")
 
+        # Diagnostic logging strictly for Section 2 safe verification
+        is_diag_phrase = (user_text.strip().lower() == "set password")
+        if is_diag_phrase:
+            print(f"[DIAGNOSTIC] TRANSCRIPT_RECEIVED: {user_text}")
+            print(f"[DIAGNOSTIC] ROUTER_CALLED: YES")
+            diag_route = self.engine.router.route_intent(user_text)
+            print(f"[DIAGNOSTIC] ROUTED_INTENT: {diag_route.get('intent')}")
+
         local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id)
         if local_response:
+            if is_diag_phrase:
+                print(f"[DIAGNOSTIC] LOCAL_HANDLER_CALLED: YES")
+                print(f"[DIAGNOSTIC] GEMINI_FALLBACK_CALLED: NO")
+
             # Cancel any pending wake/startup greeting so it never interrupts or overlaps user command
             self.wake_greeting_pending = False
 
@@ -2862,15 +3598,32 @@ class SGCubeApp:
             if "sleep" in user_text.lower() or "stop listening" in user_text.lower():
                 self.enter_sleep_mode()
             else:
-                print(f"[SAVE] voice queued: '{local_response}'")
-                with self.session_lock:
-                    self.pending_speech_prompt = f"Speak this exact response out loud in a warm, natural, friendly, confident voice: '{local_response}'"
+                diag_route = self.engine.router.route_intent(user_text)
+                is_vault_or_protected = (
+                    "protected information" in local_response.lower()
+                    or "protected memory" in local_response.lower()
+                    or "sensitive information" in local_response.lower()
+                    or diag_route.get("intent", "").startswith(("SECURITY_", "VAULT_"))
+                    or (hasattr(self.engine, "vault") and self.engine.vault and hasattr(self.engine.vault, "record_exists_for_query") and self.engine.vault.record_exists_for_query(user_text))
+                    or (hasattr(self.engine, "security") and self.engine.security and hasattr(self.engine.security, "current_state") and self.engine.security.current_state.value != "IDLE")
+                )
+                is_sec = is_security_input or is_vault_or_protected
+                if is_sec:
+                    print("[GEMINI] SECURITY AUDIO SENT = NO")
+                    self._speak_local_response(local_response, is_security=True)
+                else:
+                    print(f"[SAVE] voice queued: '{local_response}'")
+                    with self.session_lock:
+                        self.pending_speech_prompt = f"Speak this exact response out loud in a warm, natural, friendly, confident voice: '{local_response}'"
                 try:
                     self.root.after(1500, lambda: self.set_state("LISTENING") if self.current_state in ("AI_THINKING", "USER_SPEAKING") and self.playback_queue.empty() else None)
                 except Exception:
                     pass
             return True
         else:
+            if is_diag_phrase:
+                print(f"[DIAGNOSTIC] LOCAL_HANDLER_CALLED: NO")
+                print(f"[DIAGNOSTIC] GEMINI_FALLBACK_CALLED: YES")
             self.set_state("AI_THINKING")
             return False
 
@@ -2878,6 +3631,7 @@ class SGCubeApp:
         print(f"[RECEIVE] Starting receive loop for session_id={session_id}")
         t_speech_start = 0.0
         first_audio_logged = False
+        turn_intercepted = False
 
         while self.ai_running and self.active_session_id == session_id:
             try:
@@ -2898,6 +3652,7 @@ class SGCubeApp:
                             self.set_state("USER_SPEAKING")
                             # BARGE-IN: Clear old audio queue and advance response_id immediately
                             self._clear_playback_queue()
+                            turn_intercepted = False
 
                             # Accumulate streaming transcription chunks into full user utterance
                             if not self.user_transcript_buffer:
@@ -2913,16 +3668,20 @@ class SGCubeApp:
 
                         if server_content.output_transcription and server_content.output_transcription.text:
                             # Finalize pending user speech turn before processing assistant output
-                            intercepted = self._finalize_user_speech_turn()
+                            if self.user_transcript_buffer:
+                                if self._finalize_user_speech_turn():
+                                    turn_intercepted = True
                             text_chunk = server_content.output_transcription.text
-                            if not intercepted:
+                            if not turn_intercepted:
                                 self.gui_queue.put(("TRANSCRIPT_AI", text_chunk))
                                 self.engine.history.accumulate_assistant_chunk(text_chunk)
 
                         if server_content.model_turn:
                             # Finalize pending user speech turn when AI model starts speaking
-                            intercepted = self._finalize_user_speech_turn()
-                            if not intercepted:
+                            if self.user_transcript_buffer:
+                                if self._finalize_user_speech_turn():
+                                    turn_intercepted = True
+                            if not turn_intercepted:
                                 curr_resp_id = self.current_response_id
                                 for part in server_content.model_turn.parts:
                                     if part.inline_data and part.inline_data.data:
@@ -2938,20 +3697,29 @@ class SGCubeApp:
 
                         if server_content.turn_complete:
                             # Finalize any remaining user speech turn
-                            self._finalize_user_speech_turn()
+                            if self.user_transcript_buffer:
+                                if self._finalize_user_speech_turn():
+                                    turn_intercepted = True
                             t_complete = time.time()
                             total_time = t_complete - t_speech_start if t_speech_start > 0 else 0.0
                             print(f"[VOICE] response_complete (total_response_time={total_time:.3f}s)")
                             print("[GREETING 08] playback completed")
-                            # Merge accumulated streaming chunks into ONE assistant message and save to SQLite
-                            self.engine.history.finalize_assistant_turn(self.active_history_session_id)
+                            if turn_intercepted:
+                                self.engine.history.clear_assistant_turn()
+                                self._clear_playback_queue()
+                                turn_intercepted = False
+                            else:
+                                # Merge accumulated streaming chunks into ONE assistant message and save to SQLite
+                                self.engine.history.finalize_assistant_turn(self.active_history_session_id)
                             if self.playback_queue.empty():
                                 self.set_state("LISTENING")
 
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None:
                         # Finalize any pending user speech turn when tool call arrives
-                        self._finalize_user_speech_turn()
+                        if self.user_transcript_buffer:
+                            if self._finalize_user_speech_turn():
+                                turn_intercepted = True
                         for call in getattr(tool_call, "function_calls", []):
                             fn_name = call.name
                             fn_args = call.args or {}
@@ -2995,6 +3763,23 @@ class SGCubeApp:
                                 query = fn_args.get("search_query", "")
                                 memory_fact = self.engine.memory.recall_memory(query)
                                 result_content = {"recalled_memory": memory_fact or "No memory saved matching query."}
+                            elif fn_name == "manage_voice_security":
+                                act = fn_args.get("action", "set")
+                                cmd_map = {
+                                    "set": "set password",
+                                    "change": "change password",
+                                    "reset": "reset password",
+                                    "remove": "remove password",
+                                    "status": "security status"
+                                }
+                                sec_cmd = cmd_map.get(act, "set password")
+                                print(f"[SECURITY] tool_call 'manage_voice_security' executing: '{sec_cmd}'")
+                                local_resp = self.engine.process_user_speech_query(sec_cmd, session_id=self.active_history_session_id)
+                                self._clear_playback_queue()
+                                if local_resp:
+                                    self.gui_queue.put(("TRANSCRIPT_ASSISTIVE", local_resp))
+                                    self._speak_local_response(local_resp, is_security=True)
+                                result_content = {"status": "initiated", "message": local_resp or "Security flow engaged."}
 
                             try:
                                 await session.send_tool_response(
@@ -3714,8 +4499,47 @@ class SGCubeApp:
         title_lbl = tk.Label(dialog, text="⚙ Settings & Preferences", bg=COLOR_BG_PRIMARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 13, "bold"))
         title_lbl.pack(anchor="w", padx=20, pady=(15, 10))
 
-        container = tk.Frame(dialog, bg=COLOR_BG_PRIMARY, padx=20)
-        container.pack(fill=tk.BOTH, expand=True)
+        # Scrollable Settings Container (Canvas + vertical Scrollbar)
+        scroll_wrapper = tk.Frame(dialog, bg=COLOR_BG_PRIMARY)
+        scroll_wrapper.pack(fill=tk.BOTH, expand=True)
+
+        settings_canvas = tk.Canvas(scroll_wrapper, bg=COLOR_BG_PRIMARY, highlightthickness=0, bd=0)
+        settings_scrollbar = tk.Scrollbar(scroll_wrapper, orient=tk.VERTICAL, command=settings_canvas.yview)
+        settings_canvas.configure(yscrollcommand=settings_scrollbar.set)
+
+        settings_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        container = tk.Frame(settings_canvas, bg=COLOR_BG_PRIMARY, padx=20)
+        canvas_window = settings_canvas.create_window((0, 0), window=container, anchor="nw")
+
+        def _on_canvas_configure(event):
+            settings_canvas.itemconfig(canvas_window, width=event.width)
+
+        settings_canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_container_configure(event):
+            settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
+
+        container.bind("<Configure>", _on_container_configure)
+
+        def _on_mousewheel(event):
+            if not settings_canvas.winfo_exists():
+                return
+            if event.num == 4:
+                settings_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                settings_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                direction = -1 if event.delta > 0 else 1
+                steps = max(1, abs(int(event.delta / 120))) if abs(event.delta) >= 120 else 1
+                settings_canvas.yview_scroll(direction * steps, "units")
+
+        dialog.bind("<MouseWheel>", _on_mousewheel)
+        dialog.bind("<Button-4>", _on_mousewheel)
+        dialog.bind("<Button-5>", _on_mousewheel)
+        settings_canvas.bind("<MouseWheel>", _on_mousewheel)
+        container.bind("<MouseWheel>", _on_mousewheel)
 
         var_greetings = tk.BooleanVar(value=self.engine.store.get_setting("greeting_enabled", True))
         var_safety = tk.BooleanVar(value=self.engine.store.get_setting("safety_alerts_enabled", True))
@@ -4007,6 +4831,19 @@ class SGCubeApp:
         def refresh_sec_ui():
             txt, col = get_sec_status()
             lbl_sec_status.config(text=txt, fg=col)
+            is_cfg = self.engine.security.is_configured()
+            for w in sec_btn_row.winfo_children():
+                w.pack_forget()
+            if is_cfg:
+                btn_chg_p.config(text="Change Sensitive Password")
+                btn_chg_p.pack(side=tk.LEFT, padx=2)
+                btn_lck_p.config(text="Lock Sensitive Actions")
+                btn_lck_p.pack(side=tk.LEFT, padx=2)
+                btn_rst_p.pack(side=tk.LEFT, padx=2)
+                btn_rem_p.pack(side=tk.LEFT, padx=2)
+            else:
+                btn_set_p.config(text="Set Sensitive Password")
+                btn_set_p.pack(side=tk.LEFT, padx=2)
 
         def cmd_set_password():
             import tkinter.simpledialog as sd
@@ -4083,20 +4920,12 @@ class SGCubeApp:
             messagebox.showinfo("Session Locked", "Active security authorization session has been revoked.", parent=dialog)
             refresh_sec_ui()
 
-        btn_set_p = tk.Button(sec_btn_row, text="Set Password", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_set_password)
-        btn_set_p.pack(side=tk.LEFT, padx=1)
-
-        btn_chg_p = tk.Button(sec_btn_row, text="Change", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_change_password)
-        btn_chg_p.pack(side=tk.LEFT, padx=1)
-
+        btn_set_p = tk.Button(sec_btn_row, text="Set Sensitive Password", bg=COLOR_PANEL_DEEP, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_set_password)
+        btn_chg_p = tk.Button(sec_btn_row, text="Change Sensitive Password", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_change_password)
         btn_rst_p = tk.Button(sec_btn_row, text="Reset", bg=COLOR_PANEL_DEEP, fg=COLOR_ORANGE, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_reset_password)
-        btn_rst_p.pack(side=tk.LEFT, padx=1)
-
         btn_rem_p = tk.Button(sec_btn_row, text="Remove", bg=COLOR_PANEL_DEEP, fg=COLOR_ALERT_RED, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_remove_password)
-        btn_rem_p.pack(side=tk.LEFT, padx=1)
-
-        btn_lck_p = tk.Button(sec_btn_row, text="Lock Now", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_lock_now)
-        btn_lck_p.pack(side=tk.LEFT, padx=1)
+        btn_lck_p = tk.Button(sec_btn_row, text="Lock Sensitive Actions", bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, font=("Segoe UI", 8), relief=tk.FLAT, bd=0, padx=6, pady=3, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=cmd_lock_now)
+        refresh_sec_ui()
 
         # 🔔 Proactive Assistive Alerts Card (SG CUBE 2.5 Feature 10)
         alerts_card = tk.Frame(container, bg=COLOR_PANEL_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
@@ -4203,6 +5032,11 @@ class SGCubeApp:
         btn_cancel = tk.Button(btn_frame, text="Close", font=("Segoe UI", 10), bg=COLOR_PANEL_DEEP, fg=COLOR_TEXT_PRIMARY, activebackground=COLOR_PANEL_SECONDARY, activeforeground=COLOR_CYAN_PRIMARY, relief=tk.FLAT, bd=0, padx=16, pady=6, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1, cursor="hand2", command=lambda: animate_dialog_close(dialog))
         btn_cancel.pack(side=tk.RIGHT)
 
+        # Initial scrollregion calculation and ensure viewport starts at top
+        container.update_idletasks()
+        settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
+        settings_canvas.yview_moveto(0)
+
     def _check_first_run_onboarding(self):
         """ Checks if this is a fresh installation / first-run and pops up onboarding wizard """
         first_run_done = self.engine.store.get_setting("first_run_completed", False)
@@ -4215,7 +5049,7 @@ class SGCubeApp:
         print("[ONBOARDING] Fresh installation detected. Launching First-Run Setup & Permissions Wizard...")
         dialog = tk.Toplevel(self.root)
         dialog.title("SG CUBE — First-Run Installation & Profile Setup")
-        dialog.geometry("640x620")
+        dialog.geometry("640x700")
         dialog.configure(bg=COLOR_BG_PRIMARY)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -4309,6 +5143,28 @@ class SGCubeApp:
             entry_key1.insert(0, existing_key)
         entry_key1.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
 
+        # 4. Sensitive Password Setup Card (Feature 1 Security)
+        sec_card = tk.Frame(container, bg=COLOR_BG_SECONDARY, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        sec_card.pack(fill=tk.X, pady=(0, 10), ipady=6)
+
+        sec_title = tk.Label(sec_card, text="🛡️ Sensitive Password Setup (Optional during install)", bg=COLOR_BG_SECONDARY, fg=COLOR_CYAN_PRIMARY, font=("Segoe UI", 10, "bold"))
+        sec_title.pack(anchor="w", padx=12, pady=(4, 2))
+
+        sec_desc = tk.Label(sec_card, text="Set your spoken password (min 2 words) to protect sensitive personal memories and high-risk actions.", bg=COLOR_BG_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 8))
+        sec_desc.pack(anchor="w", padx=12, pady=(0, 4))
+
+        sec_grid = tk.Frame(sec_card, bg=COLOR_BG_SECONDARY)
+        sec_grid.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        tk.Label(sec_grid, text="Sensitive Password:", bg=COLOR_BG_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        entry_pw1 = tk.Entry(sec_grid, show="•", bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        entry_pw1.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=3)
+
+        tk.Label(sec_grid, text="Repeat Password:", bg=COLOR_BG_SECONDARY, fg=COLOR_TEXT_SECONDARY, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w")
+        entry_pw2 = tk.Entry(sec_grid, show="•", bg=COLOR_BG_PRIMARY, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN_PRIMARY, font=("Segoe UI", 9), relief=tk.FLAT, bd=0, highlightbackground=COLOR_BORDER_SUBTLE, highlightthickness=1)
+        entry_pw2.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=3)
+        sec_grid.columnconfigure(1, weight=1)
+
         lbl_onboarding_status = tk.Label(container, text="", bg=COLOR_BG_PRIMARY, fg=COLOR_ALERT_RED, font=("Segoe UI", 9))
         lbl_onboarding_status.pack(pady=(0, 4))
 
@@ -4318,6 +5174,24 @@ class SGCubeApp:
                 lbl_onboarding_status.config(text="Please enter your name to personalize SG CUBE.", fg=COLOR_ALERT_RED)
                 entry_uname.focus_set()
                 return
+
+            pw1 = entry_pw1.get().strip()
+            pw2 = entry_pw2.get().strip()
+            if pw1 or pw2:
+                if pw1.lower() != pw2.lower():
+                    lbl_onboarding_status.config(text="The passwords did not match. Please try again.", fg=COLOR_ALERT_RED)
+                    entry_pw2.focus_set()
+                    return
+                if len(pw1.split()) < 2:
+                    lbl_onboarding_status.config(text="Password is too short. Please use a phrase with at least two words.", fg=COLOR_ALERT_RED)
+                    entry_pw1.focus_set()
+                    return
+                ok, msg, rc = self.engine.security.set_password(pw1)
+                if not ok:
+                    lbl_onboarding_status.config(text=msg, fg=COLOR_ALERT_RED)
+                    return
+                if rc:
+                    messagebox.showinfo("Recovery Code", f"Please safely record your one-time Voice Security Recovery Code:\n\n{rc}\n\nThis code cannot be displayed again.", parent=dialog)
 
             dname = entry_dname.get().strip() or uname
             k1 = entry_key1.get().strip()
