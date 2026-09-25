@@ -22,6 +22,12 @@ from .conversation_history import ConversationHistory
 from .api_key_manager import APIKeyManager
 from .secure_vault.secure_vault_controller import SecureVaultController
 from .secure_vault.sensitive_data_detector import SensitiveDataDetector
+from .secure_vault.security_audio_pipeline import (
+    AudioArbitrator,
+    AudioArbitrationState,
+    SecurityAudioChallengeCoordinator,
+    normalize_password_phrase
+)
 from .color_detector import ColorDetector
 from .product_scanner import ProductScanner
 from .meta_glass import MetaGlassBridge
@@ -144,6 +150,13 @@ class VisionEngine:
         if self.per_request_auth:
             self.vault.enable_per_request_auth()
 
+        # Dedicated Local Security Audio Pipeline (Silero VAD + faster-whisper + ECAPA-TDNN)
+        self.audio_arbitrator = AudioArbitrator()
+        self.security_audio_coordinator = SecurityAudioChallengeCoordinator(
+            arbitrator=self.audio_arbitrator,
+            data_dir=self.data_dir
+        )
+
         # Permission-Based System Automation Engine (SG CUBE 2.5 Feature 9)
         self.automation = AutomationManager(pref_dir=self.store.pref_dir, security_manager=self.security)
 
@@ -201,6 +214,72 @@ class VisionEngine:
         self.per_request_auth = False
         if hasattr(self, "vault"):
             self.vault.disable_per_request_auth()
+
+    def process_security_challenge_audio(
+        self,
+        raw_pcm_bytes: bytes,
+        session_id: Optional[str] = None,
+        speaker_threshold: float = 0.65
+    ) -> Tuple[bool, str]:
+        """
+        Processes local security challenge audio using Silero VAD, faster-whisper, and ECAPA-TDNN.
+        Returns (success: bool, spoken_response: str).
+        """
+        has_speaker_profile = os.path.exists(self.security_audio_coordinator.speaker_profile_path)
+
+        challenge_res = self.security_audio_coordinator.process_challenge_audio(
+            raw_pcm_bytes,
+            verifier_record=self.security._cached_verifier,
+            security_manager=self.security,
+            speaker_threshold=speaker_threshold,
+            require_speaker_verification=has_speaker_profile
+        )
+
+        if challenge_res["success"]:
+            norm_pw = challenge_res["normalized_transcript"]
+            print(f"[SECURITY-AUDIO] Audio verification PASSED: '[VOICE_PASSWORD_REDACTED]'")
+            resp = self.process_user_speech_query(norm_pw, session_id=session_id)
+            return True, resp or "Password verified. Proceeding."
+        else:
+            err = challenge_res.get("error")
+            if err:
+                self.security.current_state = SecurityState.IDLE
+                self.security._pending_action = None
+                self.context.state = ConversationState.IDLE
+                return False, err
+            if not challenge_res["password_match"]:
+                msg, _ = self.security._record_failure()
+                self.security.current_state = SecurityState.IDLE
+                self.security._pending_action = None
+                self.context.state = ConversationState.IDLE
+                return False, msg or "The password you spoke did not match. Access denied."
+            elif not challenge_res["speaker_match"]:
+                self.security.lock_session()
+                self.vault.lock()
+                self.security.current_state = SecurityState.IDLE
+                self.security._pending_action = None
+                self.context.state = ConversationState.IDLE
+                return False, "Voice authentication failed. Speaker identity mismatch. Access denied."
+            else:
+                self.security.current_state = SecurityState.IDLE
+                self.security._pending_action = None
+                self.context.state = ConversationState.IDLE
+                return False, "Security authentication failed. Access denied."
+
+    def enroll_speaker_voice(self, speech_samples: List[np.ndarray]) -> Tuple[bool, str]:
+        """
+        Enrolls user speaker embedding from at least 3 clean speech samples.
+        """
+        try:
+            loaded, msg = self.security_audio_coordinator.ensure_models_loaded()
+            if not loaded:
+                return False, f"Speaker enrollment unavailable: {msg}"
+            return self.security_audio_coordinator.ecapa.enroll_speaker(
+                speech_samples,
+                self.security_audio_coordinator.speaker_profile_path
+            )
+        except Exception as e:
+            return False, f"Speaker enrollment error: {e}"
 
     def _on_reminder_triggered(self, task: TaskItem):
         """Dispatches voice announcement when a reminder becomes due."""
@@ -608,6 +687,8 @@ class VisionEngine:
                 resp = "A password is already configured. Use change password to update it."
             else:
                 self.context.state = ConversationState.SECURITY_CHALLENGE
+                if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                    self.audio_arbitrator.enter_security_challenge()
                 resp = self.security.start_enrollment()
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
@@ -615,6 +696,8 @@ class VisionEngine:
         elif intent == "SECURITY_CHANGE":
             if self.security.is_configured():
                 self.context.state = ConversationState.SECURITY_CHALLENGE
+                if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                    self.audio_arbitrator.enter_security_challenge()
                 resp = self.security.start_change()
             else:
                 resp = "No sensitive password has been set. Say set password to create one."
@@ -628,6 +711,8 @@ class VisionEngine:
 
         elif intent == "SECURITY_REMOVE":
             self.context.state = ConversationState.SECURITY_CHALLENGE
+            if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                self.audio_arbitrator.enter_security_challenge()
             resp = self.security.start_remove()
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
@@ -701,6 +786,8 @@ class VisionEngine:
 
                 if not is_auth:
                     self.context.state = ConversationState.SECURITY_CHALLENGE
+                    if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                        self.audio_arbitrator.enter_security_challenge()
                     challenge_msg = self.security.start_challenge({
                         "intent": intent,
                         "route": route,
@@ -853,6 +940,8 @@ class VisionEngine:
                 is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
                 if self.security.is_configured() and not is_auth:
                     self.context.state = ConversationState.SECURITY_CHALLENGE
+                    if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                        self.audio_arbitrator.enter_security_challenge()
                     challenge_msg = self.security.start_challenge({
                         "intent": intent,
                         "route": route,

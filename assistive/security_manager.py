@@ -417,7 +417,7 @@ class SecurityManager:
             self._cached_verifier = new_verifier
             self.lock_session()
             self.authorize_session(self._session_ttl_seconds)
-            return True, "Your sensitive password has been changed."
+            return True, "Sensitive password changed successfully."
         return False, "Failed to update security verifier."
 
     def reset_with_recovery_code(self, recovery_code: str, new_phrase: str) -> Tuple[bool, str, Optional[str]]:
@@ -567,7 +567,7 @@ class SecurityManager:
             self.current_state = SecurityState.ENROLL_AWAIT_REPEAT
             return {
                 "handled": True,
-                "spoken_response": "Please repeat your password.",
+                "spoken_response": "Please repeat your sensitive password. Repeat your password to confirm.",
                 "action": "AWAIT_REPEAT"
             }
 
@@ -587,7 +587,7 @@ class SecurityManager:
                 self._temp_phrase_buffer = None
                 return {
                     "handled": True,
-                    "spoken_response": "The passwords did not match. Please try setting your password again.",
+                    "spoken_response": "The passwords did not match. Please try again.",
                     "action": "MISMATCH"
                 }
 
@@ -604,7 +604,7 @@ class SecurityManager:
             self.current_state = SecurityState.CHANGE_AWAIT_NEW
             return {
                 "handled": True,
-                "spoken_response": "Current password verified. Please say your new password.",
+                "spoken_response": "Current password verified. Please say your new sensitive password.",
                 "action": "AWAIT_NEW"
             }
 
@@ -619,7 +619,7 @@ class SecurityManager:
             self.current_state = SecurityState.CHANGE_AWAIT_REPEAT
             return {
                 "handled": True,
-                "spoken_response": "Please repeat your new password.",
+                "spoken_response": "Please repeat your new sensitive password. Repeat your new password to confirm.",
                 "action": "AWAIT_REPEAT"
             }
 
@@ -633,7 +633,7 @@ class SecurityManager:
                 self.authorize_session(self._session_ttl_seconds)
                 return {
                     "handled": True,
-                    "spoken_response": "Your sensitive password has been changed." if ok else "Failed to save password.",
+                    "spoken_response": "Sensitive password changed successfully." if ok else "Failed to save password.",
                     "action": "CHANGE_SUCCESS" if ok else "CHANGE_FAILED"
                 }
             else:
@@ -641,7 +641,7 @@ class SecurityManager:
                 self._temp_phrase_buffer = None
                 return {
                     "handled": True,
-                    "spoken_response": "The new passwords did not match. Password change cancelled.",
+                    "spoken_response": "The passwords did not match. Please try again.",
                     "action": "MISMATCH"
                 }
 
@@ -733,7 +733,7 @@ class SecurityManager:
         """ Starts interactive voice enrollment """
         self.current_state = SecurityState.ENROLL_AWAIT_PHRASE
         self._temp_phrase_buffer = None
-        return "Let's set your sensitive password. Please say your new password."
+        return "Please set your sensitive password. Let's set your sensitive password: say a private phrase with at least two words."
 
     def start_change(self) -> str:
         """ Starts interactive voice change """

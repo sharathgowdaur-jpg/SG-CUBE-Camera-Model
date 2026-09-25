@@ -6,15 +6,49 @@ import threading
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any
 
+from .api_key_manager import _obfuscate, _deobfuscate
+
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_MEMORY_DIR = os.path.join(PROJECT_ROOT, "data", "memory")
 
-SENSITIVE_KEYWORDS = [
+# Category C: Authentication Secrets & Credentials (NEVER stored in memory)
+CREDENTIAL_KEYWORDS = [
     "password", "passcode", "api key", "apikey", "secret key",
-    "credit card", "debit card", "cvv", "social security", "ssn",
-    "auth token", "access token", "pin number", "banking credential",
-    "voice security password", "recovery code"
+    "auth token", "access token", "recovery code", "voice security password",
+    "wifi password", "pin number", "credit card", "creditcard", "debit card", "cvv"
 ]
+
+# Category B: Sensitive Personal Information (Encrypted, Gated storage)
+SENSITIVE_PERSONAL_PATTERNS = [
+    r'\b(?:bank|routing|account|checking|savings)\s*number\b',
+    r'\b(?:bank\s*account|routing\s*code|iban|swift\s*code)\b',
+    r'\b(?:social\s*security|ssn|national\s*id|passport\s*number|driver[s\']?\s*license)\b',
+    r'\b(?:confidential\s*note|private\s*note|financial\s*info|salary|tax\s*id)\b',
+    r'\b(?:sensitive\s*(?:info|information|data|note|notes))\b'
+]
+
+# Legacy keyword list for backward compatibility
+SENSITIVE_KEYWORDS = CREDENTIAL_KEYWORDS
+
+def is_credential_secret(text: Optional[str]) -> bool:
+    """ Returns True if text contains authentication secrets or credentials that must never be stored """
+    if not text:
+        return False
+    low = text.lower()
+    if any(kw in low for kw in CREDENTIAL_KEYWORDS):
+        return True
+    if re.search(r'RC-[A-Z0-9]{4}-[A-Z0-9]{4}', text, re.IGNORECASE):
+        return True
+    if re.search(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', text):
+        return True
+    return False
+
+def is_sensitive_personal_info(text: Optional[str]) -> bool:
+    """ Returns True if text contains sensitive personal information (financial, identity, confidential notes) """
+    if not text:
+        return False
+    low = text.lower()
+    return any(re.search(pat, low) for pat in SENSITIVE_PERSONAL_PATTERNS)
 
 class MemoryCategory(str, Enum):
     PERSONAL = "personal"
@@ -185,6 +219,7 @@ class MemoryManager:
                         source TEXT DEFAULT 'voice_explicit',
                         confidence REAL DEFAULT 1.0,
                         is_active INTEGER DEFAULT 1,
+                        is_sensitive INTEGER DEFAULT 0,
                         created_at REAL NOT NULL,
                         updated_at REAL NOT NULL
                     );
@@ -208,11 +243,17 @@ class MemoryManager:
                         cursor.execute("ALTER TABLE memories ADD COLUMN is_active INTEGER DEFAULT 1")
                     except Exception:
                         pass
+                if "is_sensitive" not in cols:
+                    try:
+                        cursor.execute("ALTER TABLE memories ADD COLUMN is_sensitive INTEGER DEFAULT 0")
+                    except Exception:
+                        pass
 
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_key ON memories (key_phrase);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_cat ON memories (category);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_upd ON memories (updated_at DESC);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories (is_active);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_sensitive ON memories (is_sensitive);")
 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS conversation_summaries (
@@ -240,11 +281,11 @@ class MemoryManager:
             conn.close()
 
     def _warm_cache(self):
-        """ Pre-loads stored keys into the in-memory RAM cache on startup """
+        """ Pre-loads stored keys into the in-memory RAM cache on startup (excluding sensitive memories) """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT key_phrase, fact_value FROM memories WHERE is_active = 1")
+            cursor.execute("SELECT key_phrase, fact_value FROM memories WHERE is_active = 1 AND (is_sensitive = 0 OR is_sensitive IS NULL)")
             rows = cursor.fetchall()
             with self._cache_lock:
                 self._ram_cache.clear()
@@ -262,7 +303,8 @@ class MemoryManager:
         key_phrase: str,
         fact_value: str,
         source: str = "voice_explicit",
-        confidence: float = 1.0
+        confidence: float = 1.0,
+        is_sensitive: bool = False
     ) -> bool:
         """
         Saves or updates a structured personal memory entry in SQLite database.
@@ -273,9 +315,13 @@ class MemoryManager:
             print("[SAVE] ERROR: Empty key or fact value.")
             return False
 
-        if self.is_sensitive_info(key_phrase) or self.is_sensitive_info(fact_value):
+        if is_credential_secret(key_phrase) or is_credential_secret(fact_value):
             print("[SAVE] ERROR: Blocked saving sensitive security credential.")
             return False
+
+        # Category B Detection: Auto-mark as sensitive if matches sensitive personal info
+        if not is_sensitive and (is_sensitive_personal_info(key_phrase) or is_sensitive_personal_info(fact_value)):
+            is_sensitive = True
 
         clean_key = normalize_memory_key(key_phrase)
         if not clean_key:
@@ -294,10 +340,7 @@ class MemoryManager:
             resolved_category = resolved_category.lower()
 
         now = time.time()
-
-        print(f"[SAVE] database path: {self.db_path}")
-        print(f"[SAVE] database opened")
-        print(f"[SAVE] INSERT started for category: '{resolved_category}', key: '{clean_key}'")
+        stored_val = _obfuscate(clean_val) if is_sensitive else clean_val
 
         try:
             conn = self._get_connection()
@@ -305,66 +348,162 @@ class MemoryManager:
                 cursor = conn.cursor()
                 
                 # Check for existing memory
-                cursor.execute("SELECT id, fact_value, category FROM memories WHERE key_phrase = ?", (clean_key,))
+                cursor.execute("SELECT id, fact_value, category, is_sensitive FROM memories WHERE key_phrase = ?", (clean_key,))
                 existing = cursor.fetchone()
 
                 if existing:
-                    existing_id, existing_fact, existing_cat = existing
-                    if existing_fact.strip().lower() == clean_val.lower():
+                    existing_id, existing_fact, existing_cat, existing_sens = existing
+                    existing_plain = _deobfuscate(existing_fact) if existing_sens else existing_fact
+                    if existing_plain.strip().lower() == clean_val.lower():
                         # Duplicate: same fact, refresh timestamp
                         cursor.execute("""
                             UPDATE memories
-                            SET updated_at = ?, source = ?, confidence = ?, is_active = 1
+                            SET updated_at = ?, source = ?, confidence = ?, is_active = 1, is_sensitive = ?
                             WHERE id = ?
-                        """, (now, source, confidence, existing_id))
-                        print(f"[SAVE] Duplicate detected: refreshed timestamp for ID={existing_id}")
+                        """, (now, source, confidence, 1 if is_sensitive else 0, existing_id))
                     else:
                         # Conflict / Update: new fact for same key, update record
                         cursor.execute("""
                             UPDATE memories
-                            SET fact_value = ?, category = ?, source = ?, confidence = ?, updated_at = ?, is_active = 1
+                            SET fact_value = ?, category = ?, source = ?, confidence = ?, updated_at = ?, is_active = 1, is_sensitive = ?
                             WHERE id = ?
-                        """, (clean_val, resolved_category, source, confidence, now, existing_id))
-                        print(f"[SAVE] Conflict resolved: updated fact for ID={existing_id}")
+                        """, (stored_val, resolved_category, source, confidence, now, 1 if is_sensitive else 0, existing_id))
                 else:
                     # New memory insertion
                     cursor.execute("""
-                        INSERT INTO memories (category, key_phrase, fact_value, source, confidence, is_active, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-                    """, (resolved_category, clean_key, clean_val, source, confidence, now, now))
-                    print("[SAVE] INSERT completed for new memory")
+                        INSERT INTO memories (category, key_phrase, fact_value, source, confidence, is_active, is_sensitive, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    """, (resolved_category, clean_key, stored_val, source, confidence, 1 if is_sensitive else 0, now, now))
 
-                # Update FTS5 Table
+                # Update FTS5 Table ONLY for non-sensitive memories
                 try:
                     cursor.execute("DELETE FROM memories_fts WHERE key_phrase = ?", (clean_key,))
-                    cursor.execute("INSERT INTO memories_fts (key_phrase, fact_value) VALUES (?, ?)", (clean_key, clean_val))
+                    if not is_sensitive:
+                        cursor.execute("INSERT INTO memories_fts (key_phrase, fact_value) VALUES (?, ?)", (clean_key, clean_val))
                 except Exception:
                     pass
 
                 conn.commit()
 
-            print("[SAVE] COMMIT completed")
-
-            # Verification in same connection
-            print("[SAVE] SELECT verification")
-            cursor.execute("SELECT key_phrase, fact_value FROM memories WHERE key_phrase = ?", (clean_key,))
-            row = cursor.fetchone()
-            if row:
-                print(f"[SAVE] memory verified: Key='{row[0]}', Value='{row[1]}'")
-            else:
-                print(f"[SAVE] WARNING: Memory row not found immediately after commit.")
-
-            # Update RAM Cache immediately
+            # Update RAM Cache ONLY for non-sensitive memories
             with self._cache_lock:
-                self._ram_cache[clean_key] = clean_val
-                norm_alias = clean_key.replace("_", " ").replace("colour", "color")
-                self._ram_cache[norm_alias] = clean_val
+                if is_sensitive:
+                    self._ram_cache.pop(clean_key, None)
+                    self._ram_cache.pop(clean_key.replace("_", " ").replace("colour", "color"), None)
+                else:
+                    self._ram_cache[clean_key] = clean_val
+                    norm_alias = clean_key.replace("_", " ").replace("colour", "color")
+                    self._ram_cache[norm_alias] = clean_val
                 self._all_memories_cache = None
 
-            print("[SAVE] completed")
             return True
         except Exception as e:
             print(f"[SAVE] ERROR: {e}")
+            return False
+
+    def save_sensitive_memory(
+        self,
+        category: str,
+        key_phrase: str,
+        fact_value: str,
+        source: str = "voice_explicit",
+        confidence: float = 1.0
+    ) -> bool:
+        """ Saves sensitive personal information encrypted in SQLite """
+        return self.save_memory(category, key_phrase, fact_value, source=source, confidence=confidence, is_sensitive=True)
+
+    def recall_sensitive_memory(self, query: str) -> Optional[str]:
+        """
+        Recalls and decrypts a sensitive personal memory entry from SQLite.
+        Requires active authorization session at the caller level.
+        """
+        if not query:
+            return None
+        raw_query = query.strip().lower().replace("?", "").replace("'", "").replace("’", "")
+        clean_search = re.sub(
+            r'^(?:where did i say|where is|where are|what did i say|what is|whats|do you know|do you remember|tell me|who is|can you tell me|which is|show|show me|recall|get)\s+(?:my|the|a|an|about)?\s*',
+            '', raw_query
+        ).strip()
+        clean_search = re.sub(r'^(?:sensitive\s*(?:info|information|data|note|notes)?)\s*', '', clean_search).strip()
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # 1. Exact match on clean_search or raw_query
+            cursor.execute("SELECT fact_value, key_phrase FROM memories WHERE is_active = 1 AND is_sensitive = 1 AND (key_phrase = ? OR key_phrase = ?) LIMIT 1",
+                           (clean_search, raw_query))
+            row = cursor.fetchone()
+            if row:
+                return _deobfuscate(row[0])
+
+            # 2. Key phrase contained in query or clean_search
+            cursor.execute("SELECT key_phrase, fact_value FROM memories WHERE is_active = 1 AND is_sensitive = 1 ORDER BY updated_at DESC")
+            rows = cursor.fetchall()
+            for kp, val in rows:
+                norm_k = kp.strip().lower()
+                if norm_k and (norm_k in raw_query or norm_k in clean_search or clean_search in norm_k):
+                    return _deobfuscate(val)
+                k_words = set(w for w in norm_k.split() if len(w) >= 3)
+                q_words = set(w for w in clean_search.split() if len(w) >= 3)
+                if k_words and (k_words.issubset(q_words) or (k_words & q_words)):
+                    return _deobfuscate(val)
+
+            if not clean_search or clean_search in ["info", "information", "notes", "data"]:
+                if rows:
+                    facts = [_deobfuscate(r[1]) for r in rows]
+                    return "; ".join(facts)
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] Sensitive recall error: {e}")
+        return None
+
+    def list_sensitive_memories(self) -> List[Dict[str, Any]]:
+        """ Lists all sensitive personal memories with decrypted values """
+        results = []
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, category, key_phrase, fact_value, created_at, updated_at, source, confidence
+                FROM memories
+                WHERE is_active = 1 AND is_sensitive = 1
+                ORDER BY updated_at DESC
+            """)
+            rows = cursor.fetchall()
+            for r in rows:
+                results.append({
+                    "id": r[0],
+                    "category": r[1],
+                    "key_phrase": r[2],
+                    "fact_value": _deobfuscate(r[3]),
+                    "created_at": r[4],
+                    "updated_at": r[5],
+                    "source": r[6] if len(r) > 6 else "voice_explicit",
+                    "confidence": r[7] if len(r) > 7 else 1.0,
+                    "is_sensitive": True
+                })
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] List sensitive error: {e}")
+        return results
+
+    def forget_sensitive_memory(self, key_phrase: str) -> bool:
+        """ Deletes a sensitive memory entry """
+        if not key_phrase:
+            return False
+        clean_key = normalize_memory_key(key_phrase)
+        raw_clean = key_phrase.strip().lower()
+        try:
+            conn = self._get_connection()
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM memories WHERE is_sensitive = 1 AND (key_phrase = ? OR key_phrase = ?)", (clean_key, raw_clean))
+                deleted = cursor.rowcount > 0
+                if not deleted:
+                    cursor.execute("DELETE FROM memories WHERE is_sensitive = 1 AND (key_phrase LIKE ? OR key_phrase LIKE ?)", (f"%{clean_key}%", f"%{raw_clean}%"))
+                    deleted = cursor.rowcount > 0
+                conn.commit()
+            return deleted
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] Delete sensitive error: {e}")
             return False
 
     def recall_memory(self, query: str, category: Optional[str] = None) -> Optional[str]:
@@ -403,7 +542,7 @@ class MemoryManager:
 
         # 2. Exact Indexed SQL Key Lookup
         try:
-            cursor.execute("SELECT fact_value FROM memories WHERE key_phrase = ? AND is_active = 1 LIMIT 1", (clean_search,))
+            cursor.execute("SELECT fact_value FROM memories WHERE key_phrase = ? AND is_active = 1 AND (is_sensitive = 0 OR is_sensitive IS NULL) LIMIT 1", (clean_search,))
             row = cursor.fetchone()
             if row:
                 val = row[0]
@@ -426,7 +565,7 @@ class MemoryManager:
                     if loc_key in self._ram_cache:
                         return self._ram_cache[loc_key]
                 try:
-                    cursor.execute("SELECT fact_value FROM memories WHERE (key_phrase = ? OR (category = 'location' AND (key_phrase LIKE ? OR fact_value LIKE ?))) AND is_active = 1 LIMIT 1",
+                    cursor.execute("SELECT fact_value FROM memories WHERE (key_phrase = ? OR (category = 'location' AND (key_phrase LIKE ? OR fact_value LIKE ?))) AND is_active = 1 AND (is_sensitive = 0 OR is_sensitive IS NULL) LIMIT 1",
                                    (loc_key, f"%{loc_entity}%", f"%{loc_entity}%"))
                     row = cursor.fetchone()
                     if row:
@@ -448,7 +587,7 @@ class MemoryManager:
                     print(f"[MEMORY] [RECALL] Normalized Alias match! Key='{norm_key_search}', Value='{val}'")
                     return val
             try:
-                cursor.execute("SELECT fact_value FROM memories WHERE key_phrase = ? AND is_active = 1 LIMIT 1", (norm_key_search,))
+                cursor.execute("SELECT fact_value FROM memories WHERE key_phrase = ? AND is_active = 1 AND (is_sensitive = 0 OR is_sensitive IS NULL) LIMIT 1", (norm_key_search,))
                 row = cursor.fetchone()
                 if row:
                     val = row[0]
@@ -460,7 +599,7 @@ class MemoryManager:
 
         # 5. In-Memory Key & Entity Matching (High precision)
         try:
-            cursor.execute("SELECT key_phrase, fact_value, category FROM memories WHERE is_active = 1 ORDER BY updated_at DESC")
+            cursor.execute("SELECT key_phrase, fact_value, category FROM memories WHERE is_active = 1 AND (is_sensitive = 0 OR is_sensitive IS NULL) ORDER BY updated_at DESC")
             rows = cursor.fetchall()
             if not rows:
                 return None
@@ -512,7 +651,7 @@ class MemoryManager:
                         SELECT m.fact_value
                         FROM memories_fts f
                         JOIN memories m ON m.key_phrase = f.key_phrase
-                        WHERE f.memories_fts MATCH ? AND m.is_active = 1
+                        WHERE f.memories_fts MATCH ? AND m.is_active = 1 AND (m.is_sensitive = 0 OR m.is_sensitive IS NULL)
                         ORDER BY m.updated_at DESC LIMIT 1
                     """, (fts_query,))
                     row = cursor.fetchone()
@@ -559,7 +698,7 @@ class MemoryManager:
             print(f"[MEMORY] [ERROR] Record fetch error: {e}")
         return None
 
-    def search_memories(self, keyword: str, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_memories(self, keyword: str, category: Optional[str] = None, include_sensitive: bool = False) -> List[Dict[str, Any]]:
         """ Searches all memories containing the given keyword via FTS5 / SQL """
         results = []
         if not keyword:
@@ -569,22 +708,25 @@ class MemoryManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        sens_cond = "" if include_sensitive else " AND (m.is_sensitive = 0 OR m.is_sensitive IS NULL)"
+        sens_cond_plain = "" if include_sensitive else " AND (is_sensitive = 0 OR is_sensitive IS NULL)"
+
         # Try FTS5 Search first
         try:
             if category:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT m.id, m.category, m.key_phrase, m.fact_value, m.created_at, m.updated_at
                     FROM memories_fts f
                     JOIN memories m ON m.key_phrase = f.key_phrase
-                    WHERE f.memories_fts MATCH ? AND m.category = ? AND m.is_active = 1
+                    WHERE f.memories_fts MATCH ? AND m.category = ? AND m.is_active = 1{sens_cond}
                     ORDER BY m.updated_at DESC LIMIT 50
                 """, (f'"{clean_kw}"*', category.lower()))
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT m.id, m.category, m.key_phrase, m.fact_value, m.created_at, m.updated_at
                     FROM memories_fts f
                     JOIN memories m ON m.key_phrase = f.key_phrase
-                    WHERE f.memories_fts MATCH ? AND m.is_active = 1
+                    WHERE f.memories_fts MATCH ? AND m.is_active = 1{sens_cond}
                     ORDER BY m.updated_at DESC LIMIT 50
                 """, (f'"{clean_kw}"*',))
             rows = cursor.fetchall()
@@ -606,17 +748,17 @@ class MemoryManager:
         try:
             like_kw = f"%{clean_kw}%"
             if category:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT id, category, key_phrase, fact_value, created_at, updated_at
                     FROM memories
-                    WHERE (key_phrase LIKE ? OR fact_value LIKE ?) AND category = ? AND is_active = 1
+                    WHERE (key_phrase LIKE ? OR fact_value LIKE ?) AND category = ? AND is_active = 1{sens_cond_plain}
                     ORDER BY updated_at DESC
                 """, (like_kw, like_kw, category.lower()))
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT id, category, key_phrase, fact_value, created_at, updated_at
                     FROM memories
-                    WHERE (key_phrase LIKE ? OR fact_value LIKE ?) AND is_active = 1
+                    WHERE (key_phrase LIKE ? OR fact_value LIKE ?) AND is_active = 1{sens_cond_plain}
                     ORDER BY updated_at DESC
                 """, (like_kw, like_kw))
             rows = cursor.fetchall()
@@ -634,29 +776,30 @@ class MemoryManager:
 
         return results
 
-    def list_all_memories(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_all_memories(self, category: Optional[str] = None, include_sensitive: bool = False) -> List[Dict[str, Any]]:
         """ Lists stored persistent memories with RAM caching, optionally filtered by category """
-        if not category:
+        if not category and not include_sensitive:
             with self._cache_lock:
                 if self._all_memories_cache is not None:
                     return list(self._all_memories_cache)
 
         results = []
+        sens_cond = "" if include_sensitive else " AND (is_sensitive = 0 OR is_sensitive IS NULL)"
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
             if category:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT id, category, key_phrase, fact_value, created_at, updated_at, source, confidence
                     FROM memories
-                    WHERE category = ? AND is_active = 1
+                    WHERE category = ? AND is_active = 1{sens_cond}
                     ORDER BY updated_at DESC
                 """, (category.lower(),))
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT id, category, key_phrase, fact_value, created_at, updated_at, source, confidence
                     FROM memories
-                    WHERE is_active = 1
+                    WHERE is_active = 1{sens_cond}
                     ORDER BY updated_at DESC
                 """)
             rows = cursor.fetchall()
@@ -671,7 +814,7 @@ class MemoryManager:
                     "source": r[6] if len(r) > 6 else "voice_explicit",
                     "confidence": r[7] if len(r) > 7 else 1.0
                 })
-            if not category:
+            if not category and not include_sensitive:
                 with self._cache_lock:
                     self._all_memories_cache = results
         except Exception as e:

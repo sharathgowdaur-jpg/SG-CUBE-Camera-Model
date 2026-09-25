@@ -15,7 +15,10 @@ if hasattr(sys.stdout, "reconfigure"):
 import numpy as np
 import sounddevice as sd
 from PIL import Image, ImageDraw
-import pystray
+try:
+    import pystray
+except ImportError:
+    pystray = None
 import speech_recognition as sr
 import win32gui
 import win32con
@@ -146,6 +149,9 @@ class SGCubeWakeListener:
         self._init_tray_icon()
 
     def _init_tray_icon(self):
+        if pystray is None:
+            self.icon = None
+            return
         image = self._create_icon_image("#00f2fe")
         menu = pystray.Menu(
             pystray.MenuItem('● Listening for "Hey SG CUBE"', lambda: None, enabled=False),

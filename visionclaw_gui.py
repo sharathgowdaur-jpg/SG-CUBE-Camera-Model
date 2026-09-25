@@ -3463,10 +3463,16 @@ class SGCubeApp:
                 is_speech = vad.process_frame(samples)
 
                 # Check if Security Mode is active
-                sec_active = hasattr(self.engine, 'security') and (self.engine.security.current_state != SecurityState.IDLE)
+                sec_active = (
+                    (hasattr(self.engine, 'security') and (self.engine.security.current_state != SecurityState.IDLE))
+                    or (hasattr(self.engine, 'audio_arbitrator') and self.engine.audio_arbitrator.is_security_mic_allowed())
+                )
 
                 if sec_active:
                     print("[GEMINI] SECURITY AUDIO SENT = NO")
+                    if hasattr(self.engine, 'audio_arbitrator') and not self.engine.audio_arbitrator.is_security_mic_allowed():
+                        self.engine.audio_arbitrator.enter_security_challenge()
+
                     if is_speech:
                         if not is_speech_ongoing:
                             is_speech_ongoing = True
@@ -3483,7 +3489,7 @@ class SGCubeApp:
                         if is_speech_ongoing:
                             speech_chunks.append(pcm_data)
                             silence_count += 1
-                            if silence_count >= 6 and speech_frame_count >= 5:
+                            if silence_count >= 8 and speech_frame_count >= 5:
                                 full_pcm = b"".join(speech_chunks)
                                 speech_chunks = []
                                 pre_roll_chunks.clear()
@@ -3491,26 +3497,30 @@ class SGCubeApp:
                                 silence_count = 0
                                 speech_frame_count = 0
 
-                                audio_data = sr.AudioData(full_pcm, 16000, 2)
-                                def _recognize_sec():
-                                    try:
-                                        return recognizer.recognize_google(audio_data)
-                                    except Exception:
-                                        return ""
-                                recognized_text = await loop.run_in_executor(None, _recognize_sec)
-
-                                if recognized_text:
-                                    print(f"[VOICE] user_speech_turn_finalized: '[VOICE_PASSWORD_REDACTED]'")
-                                    self.gui_queue.put(("TRANSCRIPT_USER", "[Protected Security Input]"))
-                                    local_resp = self.engine.process_user_speech_query(
-                                        recognized_text,
+                                def _process_sec():
+                                    return self.engine.process_security_challenge_audio(
+                                        full_pcm,
                                         session_id=self.active_history_session_id
                                     )
-                                    if local_resp:
-                                        self.gui_queue.put(("TRANSCRIPT_AI", local_resp))
-                                        self._speak_local_response(local_resp, is_security=True)
-                                        self.engine.history.add_message(self.active_history_session_id, "user", "[VOICE_PASSWORD_REDACTED]")
-                                        self.engine.history.add_message(self.active_history_session_id, "assistant", local_resp)
+
+                                ok, local_resp = await loop.run_in_executor(None, _process_sec)
+                                del full_pcm
+
+                                if local_resp:
+                                    print(f"[VOICE] user_speech_turn_finalized: '[VOICE_PASSWORD_REDACTED]'")
+                                    self.gui_queue.put(("TRANSCRIPT_USER", "[Protected Security Input]"))
+                                    self.gui_queue.put(("TRANSCRIPT_AI", local_resp))
+                                    self._speak_local_response(local_resp, is_security=True)
+                                    self.engine.history.add_message(self.active_history_session_id, "user", "[VOICE_PASSWORD_REDACTED]")
+                                    self.engine.history.add_message(self.active_history_session_id, "assistant", local_resp)
+
+                                # Release microphone back to Gemini Live
+                                if hasattr(self.engine, 'audio_arbitrator'):
+                                    self.engine.audio_arbitrator.return_to_gemini()
+                                try:
+                                    self.set_state("LISTENING")
+                                except Exception:
+                                    pass
                     continue
 
                 # IDLE Mode: Stream raw PCM directly to Gemini Live in real time (< 50ms latency)
@@ -3610,6 +3620,8 @@ class SGCubeApp:
                 is_sec = is_security_input or is_vault_or_protected
                 if is_sec:
                     print("[GEMINI] SECURITY AUDIO SENT = NO")
+                    if hasattr(self.engine, 'audio_arbitrator') and ("say your voice password" in local_response.lower() or "sensitive password" in local_response.lower()):
+                        self.engine.audio_arbitrator.enter_security_challenge()
                     self._speak_local_response(local_response, is_security=True)
                 else:
                     print(f"[SAVE] voice queued: '{local_response}'")

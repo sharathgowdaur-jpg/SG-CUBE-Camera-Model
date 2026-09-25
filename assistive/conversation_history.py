@@ -10,7 +10,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_HISTORY_DIR = os.path.join(PROJECT_ROOT, "data", "history")
 
 def is_sensitive_info(text: str) -> bool:
-    """ Blocks security credentials, passwords, card numbers, and API keys from being stored """
+    """ Blocks security credentials, passwords, card numbers, API keys, and sensitive personal info from being stored in conversation history """
     if not text:
         return False
     lower = text.lower()
@@ -18,9 +18,24 @@ def is_sensitive_info(text: str) -> bool:
         r'\b(?:password|passcode|pin|cvv)\b',
         r'\b(?:api[_\s]?key|secret[_\s]?key|access[_\s]?token|auth[_\s]?token)\b',
         r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',
-        r'\b(?:bank|routing|account)\s*number\b'
+        r'\b(?:bank|routing|account|checking|savings)\s*number\b',
+        r'\b(?:bank\s*account|routing\s*code|iban|swift\s*code)\b',
+        r'\b(?:social\s*security|ssn|national\s*id|passport\s*number|driver[s\']?\s*license)\b',
+        r'\b(?:credit\s*card|debit\s*card)\b',
+        r'\b(?:confidential\s*note|private\s*note|financial\s*info|salary|tax\s*id)\b',
+        r'\b(?:sensitive\s*(?:info|information|data|note|notes))\b',
+        r'RC-[A-Z0-9]{4}-[A-Z0-9]{4}',
+        r'\b(?:atm\s*pin|vault|protected\s*memory|secure\s*memory)\b'
     ]
-    return any(re.search(p, lower) for p in patterns)
+    if any(re.search(p, lower) for p in patterns):
+        return True
+    try:
+        from .secure_vault.sensitive_data_detector import SensitiveDataDetector
+        if SensitiveDataDetector.is_sensitive(text):
+            return True
+    except Exception:
+        pass
+    return False
 
 class ConversationHistory:
     """
@@ -119,7 +134,7 @@ class ConversationHistory:
             return False
 
         clean_text = text.strip()
-        if is_sensitive_info(clean_text):
+        if is_sensitive_info(clean_text) or intent in ("VAULT_SAVE", "VAULT_RECALL", "VAULT_LOCK", "VAULT_DELETE", "SECURITY_LOCK", "SECURITY_SET", "SECURITY_CHANGE", "SECURITY_REMOVE"):
             print("[HISTORY] Blocked saving sensitive credentials.")
             return False
 
@@ -172,6 +187,10 @@ class ConversationHistory:
     def finalize_assistant_turn(self, session_id: str, intent: str = "GENERAL") -> Optional[str]:
         """ Alias for commit_turn """
         return self.commit_turn(session_id, sender="assistant", intent=intent)
+
+    def clear_assistant_turn(self):
+        """ Clears accumulated assistant chunks for an intercepted turn without logging to DB """
+        self.current_turn_chunks.clear()
 
     def list_all_sessions(self) -> List[Dict]:
         """ Lists all history sessions """
