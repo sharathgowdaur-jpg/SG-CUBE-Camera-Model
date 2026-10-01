@@ -359,6 +359,9 @@ pytest tests/ -v
 ### 🤝 Contributors
 * **Gajanand V Dhayagode** ([@gajanand27-05](https://github.com/gajanand27-05)) — Windows DPAPI hardware-bound security enhancements and dependencies hardening
 
+### 👥 Team Members
+* **Ganesh Bukka** ([@Ganu39](https://github.com/Ganu39)) — Provided valuable suggestions, ideas, feedback, and overall project support.
+* * **Gangadhara C** ([@gangadharac](https://github.com/gangadharac)) — Provided valuable suggestions, ideas, feedback, and overall project support.
 ---
 
 # 📜 License
