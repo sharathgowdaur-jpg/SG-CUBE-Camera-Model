@@ -275,7 +275,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
     # 10. High-Risk Two-Factor (Voice + Live Face)
     def test_24_face_2fa_known_and_confirmed(self):
         faces = [{
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": True,
@@ -283,7 +283,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
         }]
         ok, msg, user = self.sec.evaluate_live_face_2fa(faces)
         self.assertTrue(ok)
-        self.assertEqual(user, "Sharath")
+        self.assertEqual(user, "Alex")
 
     def test_25_face_2fa_rejected_on_unknown(self):
         faces = [{
@@ -299,7 +299,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
     def test_26_face_2fa_rejected_on_liveness_failure(self):
         faces = [{
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": False,
@@ -311,7 +311,7 @@ class TestVoiceSecurityPassword(unittest.TestCase):
 
     def test_27_face_2fa_rejected_on_quality_failure(self):
         faces = [{
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": True,

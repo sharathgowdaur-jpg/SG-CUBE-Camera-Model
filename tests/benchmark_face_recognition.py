@@ -30,7 +30,7 @@ def run_comprehensive_benchmark():
         # -------------------------------------------------------------
         # 1. ENROLLMENT BENCHMARK: Enroll 5 Distinct Synthetic Profiles
         # -------------------------------------------------------------
-        enrolled_names = ["Sharath", "Priya", "Vikram", "Ananya", "Rohan"]
+        enrolled_names = ["Alex", "Priya", "Vikram", "Ananya", "Rohan"]
         enrolled_embeddings = {}
 
         print("\n[STEP 1] Enrolling benchmark identities with multi-sample gallery...")
@@ -180,7 +180,7 @@ def run_comprehensive_benchmark():
 
         # D. Match & Temporal Tracker Latency
         match_times = []
-        q_emb = enrolled_embeddings["Sharath"]
+        q_emb = enrolled_embeddings["Alex"]
         for _ in range(50):
             t0 = time.perf_counter()
             _ = mem.match_face_embedding(q_emb, threshold=0.65)
@@ -211,11 +211,11 @@ def run_comprehensive_benchmark():
         bbox = (260, 180, 120, 120)
         t_sim = 100.0
 
-        # Simulate 20 consecutive frames of Sharath
+        # Simulate 20 consecutive frames of Alex
         greetings_fired = 0
         confirmed_frames = 0
         for f in range(20):
-            dets = [{"bbox": bbox, "state": "KNOWN", "name": "Sharath", "confidence": 0.91, "quality_ok": True}]
+            dets = [{"bbox": bbox, "state": "KNOWN", "name": "Alex", "confidence": 0.91, "quality_ok": True}]
             res = tracker.update(dets, timestamp=t_sim + f * 0.05)
             if res[0]["should_greet"]:
                 greetings_fired += 1
@@ -233,14 +233,14 @@ def run_comprehensive_benchmark():
         # -------------------------------------------------------------
         print("\n[STEP 5] Comparing Single-Photo vs Multi-Sample Enrollment Accuracy...")
 
-        # Setup test person: "Sharath"
+        # Setup test person: "Alex"
         # Profile A: Single photo enrollment
         single_photo_crop = create_synthetic_face_image(seed=7000, contrast=45)
-        single_pid = mem.save_person("Sharath_Single", face_crop=single_photo_crop)
+        single_pid = mem.save_person("Alex_Single", face_crop=single_photo_crop)
 
         # Profile B: Multi-sample (25 samples across poses/lighting)
         multi_samples = [create_synthetic_face_image(seed=7000 + i, contrast=40 + (i % 5), brightness=100 + i * 4) for i in range(25)]
-        multi_pid = mem.save_person("Sharath_Multi", face_crop=multi_samples[0], additional_samples=multi_samples[1:])
+        multi_pid = mem.save_person("Alex_Multi", face_crop=multi_samples[0], additional_samples=multi_samples[1:])
 
         mem.load_all_profiles()
 
@@ -255,7 +255,7 @@ def run_comprehensive_benchmark():
         for probe in test_probes:
             q_emb = mem.compute_face_embedding(probe)
             res = mem.match_face_embedding(q_emb, threshold=0.60)
-            if res["state"] == "KNOWN" and res["name"] == "Sharath_Single":
+            if res["state"] == "KNOWN" and res["name"] == "Alex_Single":
                 single_hits += 1
 
         single_gar = (single_hits / float(len(test_probes))) * 100.0
@@ -265,7 +265,7 @@ def run_comprehensive_benchmark():
         for probe in test_probes:
             q_emb = mem.compute_face_embedding(probe)
             res = mem.match_face_embedding(q_emb, threshold=0.60)
-            if res["state"] == "KNOWN" and res["name"] == "Sharath_Multi":
+            if res["state"] == "KNOWN" and res["name"] == "Alex_Multi":
                 multi_hits += 1
 
         multi_gar = (multi_hits / float(len(test_probes))) * 100.0

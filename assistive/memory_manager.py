@@ -15,7 +15,8 @@ DEFAULT_MEMORY_DIR = os.path.join(PROJECT_ROOT, "data", "memory")
 CREDENTIAL_KEYWORDS = [
     "password", "passcode", "api key", "apikey", "secret key",
     "auth token", "access token", "recovery code", "voice security password",
-    "wifi password", "pin number", "credit card", "creditcard", "debit card", "cvv"
+    "wifi password", "pin number", "credit card", "creditcard", "debit card", "cvv",
+    "atm pin", "door pin", "upi pin", "pin code"
 ]
 
 # Category B: Sensitive Personal Information (Encrypted, Gated storage)
@@ -24,7 +25,8 @@ SENSITIVE_PERSONAL_PATTERNS = [
     r'\b(?:bank\s*account|routing\s*code|iban|swift\s*code)\b',
     r'\b(?:social\s*security|ssn|national\s*id|passport\s*number|driver[s\']?\s*license)\b',
     r'\b(?:confidential\s*note|private\s*note|financial\s*info|salary|tax\s*id)\b',
-    r'\b(?:sensitive\s*(?:info|information|data|note|notes))\b'
+    r'\b(?:sensitive\s*(?:info|information|data|note|notes))\b',
+    r'\b(?:atm\s*pin|door\s*pin|upi\s*pin|pin\s*code|\bpin\b)\b'
 ]
 
 # Legacy keyword list for backward compatibility
@@ -41,6 +43,20 @@ def is_credential_secret(text: Optional[str]) -> bool:
         return True
     if re.search(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', text):
         return True
+    if re.search(r'\b(?:atm\s*pin|door\s*pin|upi\s*pin|pin\s*code|\bpin\b)\b', low):
+        return True
+    try:
+        from .secure_vault.sensitive_data_detector import SensitiveDataDetector, SensitiveCategory
+        res = SensitiveDataDetector.classify(text)
+        if res.is_sensitive and res.category in (
+            SensitiveCategory.CREDENTIAL,
+            SensitiveCategory.PIN,
+            SensitiveCategory.API_KEY,
+            SensitiveCategory.CARD_NUMBER
+        ):
+            return True
+    except Exception:
+        pass
     return False
 
 def is_sensitive_personal_info(text: Optional[str]) -> bool:
@@ -48,7 +64,16 @@ def is_sensitive_personal_info(text: Optional[str]) -> bool:
     if not text:
         return False
     low = text.lower()
-    return any(re.search(pat, low) for pat in SENSITIVE_PERSONAL_PATTERNS)
+    if any(re.search(pat, low) for pat in SENSITIVE_PERSONAL_PATTERNS):
+        return True
+    try:
+        from .secure_vault.sensitive_data_detector import SensitiveDataDetector
+        res = SensitiveDataDetector.classify(text)
+        if res.is_sensitive:
+            return True
+    except Exception:
+        pass
+    return False
 
 class MemoryCategory(str, Enum):
     PERSONAL = "personal"
@@ -201,6 +226,15 @@ class MemoryManager:
             conn.execute("PRAGMA temp_store=MEMORY;")
             self._tls.conn = conn
         return self._tls.conn
+
+    def close(self):
+        """ Closes thread-local SQLite connection """
+        if hasattr(self._tls, "conn") and self._tls.conn is not None:
+            try:
+                self._tls.conn.close()
+            except Exception:
+                pass
+            self._tls.conn = None
 
     def _init_database(self):
         """ Initializes database schema and runs seamless column migrations """
@@ -506,6 +540,121 @@ class MemoryManager:
             print(f"[MEMORY] [ERROR] Delete sensitive error: {e}")
             return False
 
+    def save_note(self, note_text: str, title: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Saves a user note in SQLite memories.db under category 'note'.
+        Protects sensitive personal information using encryption.
+        Blocks authentication credentials.
+        """
+        clean_note = note_text.strip()
+        if not clean_note:
+            return False, "Note content cannot be empty."
+
+        if is_credential_secret(clean_note):
+            return False, "I cannot save security credentials, passwords, or PINs in notes."
+
+        is_sensitive = is_sensitive_personal_info(clean_note)
+
+        # Determine note title / key
+        if title and title.strip():
+            note_key = title.strip().lower()
+        else:
+            words = clean_note.split()
+            note_key = " ".join(words[:6]).lower()
+
+        success = self.save_memory(
+            category="note",
+            key_phrase=note_key,
+            fact_value=clean_note,
+            source="voice_note",
+            is_sensitive=is_sensitive
+        )
+        if success:
+            return True, f"Note saved: '{clean_note}'"
+        return False, "I couldn't save that note."
+
+    def list_notes(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """
+        Retrieves all active notes from memories.db.
+        """
+        notes = []
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, key_phrase, fact_value, is_sensitive, created_at, updated_at
+                FROM memories
+                WHERE is_active = 1 AND category = 'note'
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            for r in rows:
+                val = _deobfuscate(r[2]) if r[3] else r[2]
+                notes.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "text": val,
+                    "is_sensitive": bool(r[3]),
+                    "created_at": r[4],
+                    "updated_at": r[5]
+                })
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] list_notes failed: {e}")
+        return notes
+
+    def search_notes(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Searches active notes in memories.db by keyword or title.
+        """
+        clean_q = query.strip().lower()
+        if not clean_q:
+            return self.list_notes()
+
+        results = []
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, key_phrase, fact_value, is_sensitive, created_at, updated_at
+                FROM memories
+                WHERE is_active = 1 AND category = 'note'
+                AND (key_phrase LIKE ? OR fact_value LIKE ?)
+                ORDER BY updated_at DESC
+            """, (f"%{clean_q}%", f"%{clean_q}%"))
+            rows = cursor.fetchall()
+            for r in rows:
+                val = _deobfuscate(r[2]) if r[3] else r[2]
+                results.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "text": val,
+                    "is_sensitive": bool(r[3]),
+                    "created_at": r[4],
+                    "updated_at": r[5]
+                })
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] search_notes failed: {e}")
+        return results
+
+    def delete_note(self, note_id_or_title: Any) -> bool:
+        """
+        Deactivates or deletes a note by ID or title key.
+        """
+        try:
+            conn = self._get_connection()
+            with conn:
+                cursor = conn.cursor()
+                if isinstance(note_id_or_title, int) or (isinstance(note_id_or_title, str) and note_id_or_title.isdigit()):
+                    cursor.execute("UPDATE memories SET is_active = 0 WHERE id = ? AND category = 'note'", (int(note_id_or_title),))
+                else:
+                    norm = str(note_id_or_title).strip().lower()
+                    cursor.execute("UPDATE memories SET is_active = 0 WHERE (key_phrase = ? OR key_phrase LIKE ?) AND category = 'note'", (norm, f"%{norm}%"))
+                return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[MEMORY] [ERROR] delete_note failed: {e}")
+            return False
+
     def recall_memory(self, query: str, category: Optional[str] = None) -> Optional[str]:
         """
         High-Performance Hierarchical Memory Retrieval:
@@ -521,9 +670,10 @@ class MemoryManager:
 
         raw_query = query.strip().lower().replace("?", "").replace("'", "").replace("’", "")
         clean_search = re.sub(
-            r'^(?:where did i say|where is|where are|what did i say|what is|whats|do you know|do you remember|tell me|who is|can you tell me|which is)\s+(?:my|the|a|an|about)?\s*',
+            r'^(?:where did i say|where is|where are|what did i say|what is|whats|do you know|do you remember|tell me|who is|can you tell me|which is)\s+(?:(?:about|the|my|an|a)\s+)*',
             '', raw_query
         ).strip()
+        clean_search = re.sub(r'^(?:about|the|my|an|a)\s+', '', clean_search).strip()
         print(f"[MEMORY] [RECALL] Querying persistent memories for: '{query}' (cleaned: '{clean_search}')")
 
         # 1. RAM Cache Lookup (Sub-microsecond)
@@ -640,6 +790,17 @@ class MemoryManager:
                     with self._cache_lock:
                         self._ram_cache[clean_search] = val_p
                     print(f"[MEMORY] [RECALL] Token subset match found! Key='{key_p}', Value='{val_p}'")
+                    return val_p
+
+            # Pass 3.5: Entity root match (e.g. key is 'laptop location', query mentions 'laptop')
+            GENERIC_MODIFIERS = {"favorite", "preferred", "best", "main", "my", "first", "last", "current", "new", "old"}
+            for key_p, val_p, cat_p in rows:
+                norm_key = key_p.strip().lower().replace("_", " ")
+                ent = re.sub(r'\s+(?:location|name|color|detail|info|status)$', '', norm_key).strip()
+                if ent and len(ent) >= 3 and ent not in GENERIC_MODIFIERS and (ent in clean_search or ent in raw_query):
+                    with self._cache_lock:
+                        self._ram_cache[clean_search] = val_p
+                    print(f"[MEMORY] [RECALL] Entity root match found! Key='{key_p}', Value='{val_p}'")
                     return val_p
 
             # Fourth pass: SQLite FTS5 Full-Text Search with AND requirement

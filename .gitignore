@@ -23,13 +23,24 @@ tests/standalone_backend_tmp/
 data/memory/*.db*
 data/history/*.db*
 data/face_memory/*/
+data/face_memory/*.db*
 data/user_preferences/*.dat
 data/user_preferences/*.json
+data/secure_vault/*.db*
+data/tasks/*.db*
+data/screenshots/*
 data/logs/*.log
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.log
+*.tmp
+scratch/
+scratch_*
+test_responsiveness_fix*.py
+test_screen_reading.py
 
 # Packaging and Build artifacts
 build/

@@ -359,7 +359,7 @@ class TestContextMemory(unittest.TestCase):
 
         # When known face is confirmed with liveness and quality
         face_known = [{
-            "name": "Sharath",
+            "name": "Alex",
             "match_state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": True,
@@ -367,7 +367,7 @@ class TestContextMemory(unittest.TestCase):
         }]
         ok_face, msg_f, name_f = self.security.evaluate_live_face_2fa(face_known)
         self.assertTrue(ok_face)
-        self.assertEqual(name_f, "Sharath")
+        self.assertEqual(name_f, "Alex")
 
     # ----------------------------------------------------------------------
     # 11. Transaction Safety & VisionEngine Execution

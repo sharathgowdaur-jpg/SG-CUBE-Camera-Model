@@ -36,14 +36,14 @@ class TestFirstRunExplicitSave(unittest.TestCase):
         self.assertFalse(self.engine.store.get_setting("first_run_completed"))
 
         # Perform onboarding profile setup
-        self.engine.store.set_setting("user_name", "Sharath")
-        self.engine.store.set_setting("user_display_name", "Sharath")
+        self.engine.store.set_setting("user_name", "Alex")
+        self.engine.store.set_setting("user_display_name", "Alex")
         self.engine.store.set_setting("first_run_completed", True)
 
         # Reload store to simulate restart
         reloaded_store = MemoryStore(base_dir=TEST_DATA_DIR)
         self.assertTrue(reloaded_store.get_setting("first_run_completed"))
-        self.assertEqual(reloaded_store.get_setting("user_display_name"), "Sharath")
+        self.assertEqual(reloaded_store.get_setting("user_display_name"), "Alex")
 
     def test_02_explicit_memory_save_and_confirmation(self):
         # 1. Explicit save request

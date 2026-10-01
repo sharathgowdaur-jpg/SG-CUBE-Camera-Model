@@ -241,6 +241,28 @@ class AutomationManager:
             process_names=["WhatsApp.exe", "WhatsApp.Root.exe"],
             aliases=["whatsapp", "whatsapp desktop", "whats app", "the whatsapp", "messages", "chat"]
         ),
+        "vscode": AutomationActionDefinition(
+            action_type=AutomationActionType.OPEN_APP,
+            name="vscode",
+            display_name="Visual Studio Code",
+            description="Visual Studio Code Editor",
+            default_risk=AutomationRiskLevel.LOW_RISK,
+            default_permission=AutomationPermission.ALLOWED,
+            executable_candidates=["code.cmd", "code.exe", "code"],
+            process_names=["Code.exe", "code.exe"],
+            aliases=["vscode", "vs code", "code", "visual studio code"]
+        ),
+        "settings": AutomationActionDefinition(
+            action_type=AutomationActionType.OPEN_APP,
+            name="settings",
+            display_name="Windows Settings",
+            description="Windows Settings App",
+            default_risk=AutomationRiskLevel.LOW_RISK,
+            default_permission=AutomationPermission.ALLOWED,
+            executable_candidates=["SystemSettings.exe", "control.exe"],
+            process_names=["SystemSettings.exe"],
+            aliases=["settings", "windows settings", "pc settings", "system settings"]
+        ),
     }
 
     # Default Allowed Domains for Safe Web Navigation
@@ -780,7 +802,52 @@ class AutomationManager:
         return f"proceed with {request.display_name}"
 
     def _exec_read_screen(self, request: AutomationRequest) -> AutomationResult:
-        """Extracts structured readable content from active window via UIAutomationManager."""
+        """
+        Analyzes the currently visible screen for a visually impaired user.
+        Pipeline:
+          1. Try ScreenReaderController (Gemini Flash multimodal vision)
+          2. Fallback: existing UIAutomationManager.read_screen_content() (OCR + UIA)
+        """
+        from .screen_reader_controller import get_screen_reader
+
+        # If UIAutomationManager has mock overrides active (for testing), use it directly
+        if getattr(self.ui_automation, "_mock_active_window", None) is not None or getattr(self.ui_automation, "_mock_notepad_content", None) is not None:
+            app_target = request.params.get("app") or request.target
+            res = self.ui_automation.read_screen_content(app_name=app_target)
+            status = AutomationResultStatus.SUCCESS if res.get("status") == "SUCCESS" else AutomationResultStatus.FAILED
+            spoken = res.get("spoken_response", "No readable content found on screen.")
+            msg = f"Screen read for {res.get('app', 'screen')}: {spoken}"
+            self._record_audit(request, status, msg)
+            return AutomationResult(
+                status=status,
+                message=msg,
+                spoken_response=spoken,
+                request=request,
+                action_type=request.action_type,
+                target=request.target
+            )
+
+        # --- PRIMARY PATH: Gemini Flash multimodal screen understanding ---
+        try:
+            reader = get_screen_reader(api_key=os.environ.get("GEMINI_API_KEY", ""))
+            result = reader.read_screen()
+            spoken = result.get("spoken_response", "").strip()
+            if spoken and len(spoken) > 10:
+                status = AutomationResultStatus.SUCCESS
+                msg = f"Screen read (multimodal) for {result.get('app_name', 'screen')}: OK"
+                self._record_audit(request, status, msg)
+                return AutomationResult(
+                    status=status,
+                    message=msg,
+                    spoken_response=spoken,
+                    request=request,
+                    action_type=request.action_type,
+                    target=request.target
+                )
+        except Exception as e:
+            logger.warning("[AutomationManager] Multimodal screen reader failed, falling back to OCR: %s", e)
+
+        # --- FALLBACK PATH: Existing OCR + UIA screen content extraction ---
         app_target = request.params.get("app") or request.target
         res = self.ui_automation.read_screen_content(app_name=app_target)
         status = AutomationResultStatus.SUCCESS if res.get("status") == "SUCCESS" else AutomationResultStatus.FAILED
@@ -795,6 +862,7 @@ class AutomationManager:
             action_type=request.action_type,
             target=request.target
         )
+
 
     def _exec_send_message(self, request: AutomationRequest) -> AutomationResult:
         """Sends a message via UIAutomationManager upon verified confirmation."""
@@ -818,34 +886,82 @@ class AutomationManager:
     # --------------------------------------------------------------------------
 
     def _exec_open_app(self, request: AutomationRequest) -> AutomationResult:
-        """Opens an approved application using non-shell subprocess."""
+        """Opens an approved application using non-shell subprocess with multi-candidate fallback."""
         defn = self.resolve_app(request.target)
         if not defn or not defn.executable_candidates:
             return self._fail(request, f"Application '{request.target}' is not in the approved allowlist.")
 
-        exe_name = defn.executable_candidates[0]
-        
-        # Resolve full path if available, or rely on system PATH search without shell
-        full_path = shutil.which(exe_name) or exe_name
+        # Special native handler for Windows Settings
+        if defn.name == "settings":
+            try:
+                if hasattr(os, "startfile"):
+                    os.startfile("ms-settings:")
+                    time.sleep(0.3)
+                    msg = "Opened Windows Settings."
+                    spoken = "I've opened Windows Settings."
+                    self._record_audit(request, AutomationResultStatus.SUCCESS, msg)
+                    return AutomationResult(
+                        status=AutomationResultStatus.SUCCESS,
+                        message=msg,
+                        spoken_response=spoken,
+                        request=request,
+                        action_type=request.action_type,
+                        target=defn.display_name,
+                        pid=None
+                    )
+            except Exception as e:
+                return self._fail(request, f"Could not launch Windows Settings: {e}")
 
-        try:
-            # shell=False strictly enforced
-            proc = subprocess.Popen([full_path], shell=False)
-            pid = proc.pid
-            msg = f"Opened {defn.display_name} (PID: {pid})."
-            spoken = f"I've opened {defn.display_name}."
-            self._record_audit(request, AutomationResultStatus.SUCCESS, msg)
-            return AutomationResult(
-                status=AutomationResultStatus.SUCCESS,
-                message=msg,
-                spoken_response=spoken,
-                request=request,
-                action_type=request.action_type,
-                target=defn.display_name,
-                pid=pid
-            )
-        except Exception as e:
-            return self._fail(request, f"Could not launch {defn.display_name}: {e}")
+        # Special verified handler for Windows Notepad
+        if defn.name == "notepad":
+            try:
+                from .notepad_controller import get_notepad_controller
+                ok, spoken, details = get_notepad_controller().open_notepad()
+                status = AutomationResultStatus.SUCCESS if ok else AutomationResultStatus.FAILED
+                self._record_audit(request, status, details)
+                return AutomationResult(
+                    status=status,
+                    message=details,
+                    spoken_response=spoken,
+                    request=request,
+                    action_type=request.action_type,
+                    target=defn.display_name,
+                    pid=None
+                )
+            except Exception as e:
+                return self._fail(request, f"Could not launch Notepad: {e}")
+
+        proc = None
+        last_err = None
+        for cand in defn.executable_candidates:
+            full_path = shutil.which(cand) or cand
+            try:
+                # shell=False strictly enforced
+                proc = subprocess.Popen([full_path], shell=False)
+                if proc:
+                    pid = proc.pid
+                    time.sleep(0.3)
+                    poll_res = proc.poll()
+                    if isinstance(poll_res, int) and poll_res != 0:
+                        last_err = f"Process exited immediately with code {poll_res}"
+                        continue
+                    msg = f"Opened {defn.display_name} (PID: {pid})."
+                    spoken = f"I've opened {defn.display_name}."
+                    self._record_audit(request, AutomationResultStatus.SUCCESS, msg)
+                    return AutomationResult(
+                        status=AutomationResultStatus.SUCCESS,
+                        message=msg,
+                        spoken_response=spoken,
+                        request=request,
+                        action_type=request.action_type,
+                        target=defn.display_name,
+                        pid=pid
+                    )
+            except Exception as e:
+                last_err = e
+                continue
+
+        return self._fail(request, f"Could not launch {defn.display_name}: {last_err or 'No valid executable found'}")
 
     def _exec_close_app(self, request: AutomationRequest) -> AutomationResult:
         """Safely closes an approved application process."""
@@ -940,18 +1056,46 @@ class AutomationManager:
             return self._fail(request, "No text provided to copy.")
 
         copied = False
-        # Method 1: tkinter clipboard
+        # Method 0: win32clipboard
         try:
-            import tkinter as tk
-            root = tk.Tk()
-            root.withdraw()
-            root.clipboard_clear()
-            root.clipboard_append(text_to_copy)
-            root.update()
-            root.destroy()
-            copied = True
+            import win32clipboard
+            for _ in range(3):
+                try:
+                    win32clipboard.OpenClipboard()
+                    try:
+                        win32clipboard.EmptyClipboard()
+                        win32clipboard.SetClipboardText(text_to_copy, win32clipboard.CF_UNICODETEXT)
+                    finally:
+                        win32clipboard.CloseClipboard()
+                    copied = True
+                    break
+                except Exception:
+                    time.sleep(0.04)
         except Exception:
             pass
+
+        # Method 0.5: pyperclip
+        if not copied:
+            try:
+                import pyperclip
+                pyperclip.copy(text_to_copy)
+                copied = True
+            except Exception:
+                pass
+
+        # Method 1: tkinter clipboard
+        if not copied:
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                root.withdraw()
+                root.clipboard_clear()
+                root.clipboard_append(text_to_copy)
+                root.update()
+                root.destroy()
+                copied = True
+            except Exception:
+                pass
 
         # Method 2: clip.exe on Windows as fallback
         if not copied and sys.platform == "win32":

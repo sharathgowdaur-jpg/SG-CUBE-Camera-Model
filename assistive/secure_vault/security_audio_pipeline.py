@@ -674,6 +674,7 @@ class SecurityAudioChallengeCoordinator:
         expected_password: Optional[str] = None,
         verifier_record: Optional[Dict[str, Any]] = None,
         security_manager: Optional[Any] = None,
+        vault_authenticator: Optional[Any] = None,
         speaker_threshold: float = ECAPASpeakerVerifier.DEFAULT_THRESHOLD,
         require_speaker_verification: bool = True
     ) -> Dict[str, Any]:
@@ -685,6 +686,16 @@ class SecurityAudioChallengeCoordinator:
 
         t_start = time.time()
         latencies = {}
+
+        # Instrumentation
+        rms = 0.0
+        try:
+            samples = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
+            if len(samples) > 0:
+                rms = float(np.sqrt(np.mean(samples.astype(float)**2)))
+        except Exception:
+            pass
+        logger.info(f"[SECURITY-AUDIO] PASSWORD_AUDIO_RECEIVED: bytes={len(raw_pcm_bytes)}, frames={len(raw_pcm_bytes)//32}, duration={len(raw_pcm_bytes)/32000:.2f}s, rms={rms:.2f}")
 
         # Ensure models are loaded on first security challenge
         loaded, load_err = self.ensure_models_loaded()
@@ -723,38 +734,77 @@ class SecurityAudioChallengeCoordinator:
         t0 = time.time()
         clean_speech = self.vad.extract_clean_speech(raw_pcm_bytes)
         latencies["vad"] = time.time() - t0
+        has_speech = (clean_speech is not None and len(clean_speech) > 0)
+        logger.info(f"[SECURITY-AUDIO] VAD: speech_detected={has_speech}")
 
-        if clean_speech is None or len(clean_speech) == 0:
-            self.arbitrator.return_to_gemini()
-            return {
-                "success": False,
-                "password_match": False,
-                "speaker_match": False,
-                "transcript": "",
-                "normalized_transcript": "",
-                "speaker_similarity": 0.0,
-                "speaker_threshold": speaker_threshold,
-                "error": "No clean speech detected by Silero VAD.",
-                "latencies": latencies
-            }
+        if not has_speech:
+            # Fallback to raw float audio if buffer is long enough (>0.25s)
+            samples = np.frombuffer(raw_pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            if len(samples) >= 4000:
+                clean_speech = samples
+                logger.debug("[SECURITY-AUDIO] Silero VAD returned no chunks; using full audio buffer for Whisper.")
+            else:
+                self.arbitrator.return_to_gemini()
+                logger.info("[VOICE-PASSWORD] stt_started")
+                logger.info("[VOICE-PASSWORD] stt_completed")
+                logger.info("[VOICE-PASSWORD] transcript_received=no")
+                logger.info("[VOICE-PASSWORD] transcript_length=0")
+                logger.info("[VOICE-PASSWORD] normalization_completed")
+                logger.info("[VOICE-PASSWORD] verification=FAIL")
+                return {
+                    "success": False,
+                    "password_match": False,
+                    "speaker_match": False,
+                    "transcript": "",
+                    "normalized_transcript": "",
+                    "speaker_similarity": 0.0,
+                    "speaker_threshold": speaker_threshold,
+                    "error": "No clean speech detected by Silero VAD.",
+                    "latencies": latencies
+                }
 
         # 3. Whisper local transcription
+        logger.info("[VOICE-PASSWORD] stt_started")
         t0 = time.time()
         raw_transcript, conf = self.whisper.transcribe(clean_speech)
         latencies["transcription"] = time.time() - t0
+        logger.info("[VOICE-PASSWORD] stt_completed")
+        has_tr = bool(raw_transcript and raw_transcript.strip())
+        logger.info(f"[VOICE-PASSWORD] transcript_received={'yes' if has_tr else 'no'}")
+        logger.info(f"[VOICE-PASSWORD] transcript_length={len(raw_transcript)}")
+        logger.info(f"[SECURITY-AUDIO] PASSWORD_TRANSCRIPT_RECEIVED: {'YES' if has_tr else 'NO'}")
+        logger.info(f"[SECURITY-AUDIO] PASSWORD_TRANSCRIPT_LENGTH: {len(raw_transcript)}")
 
         # 4. Deterministic normalization
         norm_transcript = normalize_password_phrase(raw_transcript)
+        logger.info("[VOICE-PASSWORD] normalization_completed")
+        logger.info(f"[SECURITY-AUDIO] PASSWORD_NORMALIZATION_COMPLETED: YES")
 
         # 5. Password text match check
         password_match = False
         if security_manager is not None and verifier_record is not None:
-            password_match = security_manager._verify_against_record(norm_transcript, verifier_record)
-        elif expected_password is not None:
+            password_match = (
+                security_manager._verify_against_record(raw_transcript, verifier_record)
+                or security_manager._verify_against_record(norm_transcript, verifier_record)
+            )
+        if not password_match and vault_authenticator is not None and hasattr(vault_authenticator, "verify"):
+            cand_list = [raw_transcript, norm_transcript]
+            if security_manager and hasattr(security_manager, "get_candidate_forms"):
+                cand_list = security_manager.get_candidate_forms(raw_transcript) + security_manager.get_candidate_forms(norm_transcript)
+            for cand in set(cand_list):
+                ok_v, derived_key = vault_authenticator.verify(cand)
+                if ok_v and derived_key:
+                    password_match = True
+                    break
+        elif not password_match and expected_password is not None:
             norm_expected = normalize_password_phrase(expected_password)
-            password_match = (norm_transcript == norm_expected)
-        else:
-            password_match = False
+            password_match = (
+                norm_transcript == norm_expected
+                or raw_transcript.strip().lower() == expected_password.strip().lower()
+            )
+
+        logger.info(f"[VOICE-PASSWORD] verification={'PASS' if password_match else 'FAIL'}")
+        logger.info(f"[SECURITY-AUDIO] PASSWORD_VERIFICATION_RESULT: {'PASS' if password_match else 'FAIL'}")
 
         # 6. ECAPA Speaker Verification
         t0 = time.time()

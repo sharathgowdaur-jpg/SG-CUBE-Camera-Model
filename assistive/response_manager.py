@@ -2,6 +2,14 @@ import queue
 import time
 from typing import Dict, Optional, Tuple
 
+try:
+    from .tts_normalizer import TTSNormalizer
+except ImportError:
+    try:
+        from assistive.tts_normalizer import TTSNormalizer
+    except ImportError:
+        TTSNormalizer = None
+
 class ResponseManager:
     """
     Priority Speech Response Queue & Output Dispatcher.
@@ -19,15 +27,27 @@ class ResponseManager:
         self.priority_queue = queue.PriorityQueue()
         self.last_spoken_text: str = ""
         self.last_spoken_time: float = 0.0
+        self.normalizer = TTSNormalizer() if TTSNormalizer else None
 
     def add_response(self, text: str, priority: int = 5, force: bool = False):
         """
         Adds text response to priority queue. Lower number = higher priority.
+        Applies TTS normalization to convert markdown, paths, URLs, and symbols to natural speech.
         """
         if not text or not text.strip():
             return
 
         clean_text = text.strip()
+        if self.normalizer:
+            try:
+                clean_text = self.normalizer.normalize(clean_text)
+            except Exception:
+                pass
+
+        if not clean_text or not clean_text.strip():
+            return
+
+        clean_text = clean_text.strip()
         now = time.time()
 
         # Prevent exact duplicate spoken text within cooldown window unless forced

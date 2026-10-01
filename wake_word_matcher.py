@@ -8,6 +8,13 @@ class WakeWordMatcher:
     High Recall for valid phonetic/ASR candidates + Low False Activation for normal conversation.
     """
 
+    def __init__(self, threshold: float = 0.75):
+        self.threshold = threshold
+
+    def matches(self, text: str) -> Tuple[bool, float]:
+        is_match, conf, _, _, _ = self.evaluate(text)
+        return is_match and conf >= self.threshold, conf
+
     HOTWORD_PHRASES = {
         "sg cube", "hey sg cube", "sg", "s g", "cube", "sg cub", "sg cue",
         "sgq", "s g q", "ess gee", "ess gee cube", "es gee", "es gee cube",
@@ -20,7 +27,7 @@ class WakeWordMatcher:
 
     SG_TOKENS = {"sg", "s g", "ess gee", "es gee", "esgee", "essgee", "ksg", "esg", "s", "g"}
     CUBE_TOKENS = {"cube", "kyube", "q", "cub", "cue", "cuube", "kewb"}
-    PREFIX_TOKENS = {"hey", "hi", "ok", "okay", "hello", "yo"}
+    PREFIX_TOKENS = {"hey", "hi", "ok", "okay", "hello", "yo", "wake"}
 
     NON_WAKE_TERMS = {
         "facebook", "execute", "play music", "good morning everyone",
@@ -87,9 +94,9 @@ class WakeWordMatcher:
             if has_sg and has_cube:
                 return True, 0.92, "HOTWORD_SG_CUBE_COMBO", norm_text, debug_info
 
-            # Partial token combinations: "hey sg", "hi sg", "ok sg", "hey cube"
-            if word_count <= 3:
-                has_prefix = any(p in tokens for p in cls.PREFIX_TOKENS)
+            # Partial token combinations: "hey sg", "hi sg", "ok sg", "hey cube", "wake up cube please"
+            if word_count <= 4:
+                has_prefix = any(p in tokens for p in cls.PREFIX_TOKENS) or "wake up" in norm_text
                 if has_prefix and (has_sg or has_cube):
                     return True, 0.88, "HOTWORD_PREFIX_COMBO", norm_text, debug_info
 
@@ -104,14 +111,13 @@ class WakeWordMatcher:
                 if sim >= 0.80:
                     return True, float(round(sim, 2)), "HOTWORD_PHONETIC_SIMILARITY", norm_text, debug_info
 
-        # Long utterances (> 4 words) are normal conversation unless they begin with clean wake trigger
+        # Long utterances (> 4 words) are normal conversation unless they begin with clean wake trigger or contain clear hotwords
         if word_count > 4:
-            prefix_match = False
+            clean_prefix = re.sub(r'^(?:hello|hi|hey|okay|ok|excuse me|please)\s+', '', norm_text)
             for target in ["hey sg cube", "sg cube", "ok sg cube", "hi sg cube"]:
-                if norm_text.startswith(target):
-                    prefix_match = True
-                    break
-            if prefix_match:
-                return True, 0.86, "HOTWORD_PREFIX_SENTENCE", norm_text, debug_info
+                if norm_text.startswith(target) or clean_prefix.startswith(target):
+                    return True, 0.88, "HOTWORD_PREFIX_SENTENCE", norm_text, debug_info
+            if any(t in norm_text for t in ["hey sg cube", "sg cube", "ok sg cube"]):
+                return True, 0.86, "HOTWORD_EMBEDDED_SENTENCE", norm_text, debug_info
 
         return False, 0.0, "NON_WAKE_SPEECH", norm_text, debug_info

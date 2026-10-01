@@ -64,13 +64,13 @@ def clean_test_env():
 
 class TestVoiceMultiSampleEnrollment:
 
-    def test_01_voice_command_name_extraction_sharath(self):
-        """ Test 1: 'Remember my face as Sharath' deterministically extracts target 'Sharath' """
+    def test_01_voice_command_name_extraction_alex(self):
+        """ Test 1: 'Remember my face as Alex' deterministically extracts target 'Alex' """
         router = CommandRouter()
-        res = router.route_intent("Remember my face as Sharath")
+        res = router.route_intent("Remember my face as Alex")
         assert res["intent"] == "FACE_REMEMBER"
-        assert res["target"] == "Sharath"
-        assert res["params"].get("name") == "Sharath"
+        assert res["target"] == "Alex"
+        assert res["params"].get("name") == "Alex"
 
     def test_02_voice_command_name_extraction_rahul(self):
         """ Test 2: 'Save my face as Rahul' deterministically extracts target 'Rahul' """
@@ -103,31 +103,31 @@ class TestVoiceMultiSampleEnrollment:
         assert "Whom should I save this face as?" in resp or "face" in resp
 
     def test_05_re_enrollment_existing_person_confirmation(self):
-        """ Test 5: If person is already enrolled, 'Remember my face as Sharath' asks for update confirmation """
+        """ Test 5: If person is already enrolled, 'Remember my face as Alex' asks for update confirmation """
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         face_img = create_synthetic_face_image(seed=201)
-        engine.face_memory.save_person("Sharath", face_img)
+        engine.face_memory.save_person("Alex", face_img)
 
-        resp = engine.process_user_speech_query("Remember my face as Sharath")
+        resp = engine.process_user_speech_query("Remember my face as Alex")
         assert "already remembered" in resp
         assert "update the face profile" in resp
-        assert engine.pending_face_update == "Sharath"
+        assert engine.pending_face_update == "Alex"
 
     def test_06_re_enrollment_confirm_update_flow(self):
         """ Test 6: Spoken confirmation 'yes, update face profile' starts enrollment session in update mode """
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         face_img = create_synthetic_face_image(seed=301)
-        engine.face_memory.save_person("Sharath", face_img)
+        engine.face_memory.save_person("Alex", face_img)
 
         # First trigger asks for confirmation
-        engine.process_user_speech_query("Remember my face as Sharath")
-        assert engine.pending_face_update == "Sharath"
+        engine.process_user_speech_query("Remember my face as Alex")
+        assert engine.pending_face_update == "Alex"
 
         # User confirms
         resp = engine.process_user_speech_query("Yes, update face profile")
-        assert "Updating face profile for Sharath" in resp or "look directly at the camera" in resp
+        assert "Updating face profile for Alex" in resp or "look directly at the camera" in resp
         assert engine.enrollment_session.is_active
-        assert engine.enrollment_session.name == "Sharath"
+        assert engine.enrollment_session.name == "Alex"
         assert engine.enrollment_session.is_update
 
     def test_07_multi_sample_session_initialization(self):
@@ -145,7 +145,7 @@ class TestVoiceMultiSampleEnrollment:
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         rec = FaceRecognizer(face_memory=mem)
         session = FaceEnrollmentSession(target_samples=25)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         # Mock frame with multiple faces by subclassing or mock detector
         class MockRecMultiFace:
@@ -170,7 +170,7 @@ class TestVoiceMultiSampleEnrollment:
         """ Test 9: Blurry, dark, overexposed, low-contrast, or clipped frames are rejected during enrollment """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         # Blurry frame
         blurry_frame = create_synthetic_face_image(seed=501, blur=25)
@@ -190,7 +190,7 @@ class TestVoiceMultiSampleEnrollment:
         """ Test 10: Candidate frame with cosine similarity >= 0.96 with already accepted sample is rejected """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, duplicate_sim_threshold=0.96)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         face1 = create_synthetic_face_image(seed=601, contrast=50)
 
@@ -216,7 +216,7 @@ class TestVoiceMultiSampleEnrollment:
     def test_11_pose_guidance_sequence_progression(self):
         """ Test 11: Poses sequence steps through Center -> Left -> Right -> Up -> Natural """
         session = FaceEnrollmentSession(target_samples=25)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         assert session.current_stage_info["id"] == "CENTER"
 
@@ -236,7 +236,7 @@ class TestVoiceMultiSampleEnrollment:
         """ Test 12: Reaching 25 accepted samples transitions session state to VERIFYING """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -259,7 +259,7 @@ class TestVoiceMultiSampleEnrollment:
         """ Test 13: Fresh verification frames passing match (>=3 of 5) + liveness commits profile to disk """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -285,14 +285,14 @@ class TestVoiceMultiSampleEnrollment:
 
         assert v_res3["status"] == "COMPLETED"
         assert v_res3["success"]
-        assert "Sharath" in mem.list_people()
-        assert "Your face has been remembered as Sharath." in v_res3["spoken_prompt"]
+        assert "Alex" in mem.list_people()
+        assert "Your face has been remembered as Alex." in v_res3["spoken_prompt"]
 
     def test_14_fresh_verification_failure_and_rollback(self):
         """ Test 14: Fresh verification frames failing match (<3 of 5) rolls back session without writing to disk """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_max_frames=5, verification_required_confirms=3)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -318,7 +318,7 @@ class TestVoiceMultiSampleEnrollment:
         assert session.state == "FAILED"
         assert res["status"] == "FAILED"
         assert not res["success"]
-        assert "Sharath" not in mem.list_people()
+        assert "Alex" not in mem.list_people()
         assert "couldn't verify the enrollment" in res["spoken_prompt"].lower()
 
     def test_15_gallery_and_centroid_storage_format(self):
@@ -327,7 +327,7 @@ class TestVoiceMultiSampleEnrollment:
         face_img = create_synthetic_face_image(seed=5000)
         additional = [create_synthetic_face_image(seed=5001 + i) for i in range(15)]
 
-        pid = mem.save_person("Sharath", face_crop=face_img, additional_samples=additional)
+        pid = mem.save_person("Alex", face_crop=face_img, additional_samples=additional)
         assert pid in mem.profiles
 
         person_dir = mem.profiles[pid]["dir_path"]
@@ -344,7 +344,7 @@ class TestVoiceMultiSampleEnrollment:
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         engine.last_faces = [{
             "bbox": (100, 100, 120, 120),
-            "name": "Sharath",
+            "name": "Alex",
             "match_state": "KNOWN",
             "confidence": 0.95,
             "is_confirmed": False,   # NOT confirmed yet
@@ -354,14 +354,14 @@ class TestVoiceMultiSampleEnrollment:
 
         resp = engine.process_user_speech_query("Who is in front of me?")
         assert resp == "Sorry, I can't recognize you."
-        assert "Sharath" not in resp
+        assert "Alex" not in resp
 
     def test_17_name_disclosure_gate_confirmed_spoof_rejected(self):
         """ Test 17: is_confirmed=True but liveness_ok=False (spoof/photo attack) strictly outputs 'Sorry, I can't recognize you.' """
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         engine.last_faces = [{
             "bbox": (100, 100, 120, 120),
-            "name": "Sharath",
+            "name": "Alex",
             "match_state": "KNOWN",
             "confidence": 0.95,
             "is_confirmed": True,
@@ -371,14 +371,14 @@ class TestVoiceMultiSampleEnrollment:
 
         resp = engine.process_user_speech_query("Who is in front of me?")
         assert resp == "Sorry, I can't recognize you."
-        assert "Sharath" not in resp
+        assert "Alex" not in resp
 
     def test_18_name_disclosure_gate_known_confirmed_live(self):
         """ Test 18: state=KNOWN, is_confirmed=True, liveness_ok=True, quality_ok=True returns 'Hello <name>.' """
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         engine.last_faces = [{
             "bbox": (100, 100, 120, 120),
-            "name": "Sharath",
+            "name": "Alex",
             "match_state": "KNOWN",
             "confidence": 0.92,
             "is_confirmed": True,
@@ -387,13 +387,13 @@ class TestVoiceMultiSampleEnrollment:
         }]
 
         resp = engine.process_user_speech_query("Who is in front of me?")
-        assert resp == "Hello Sharath."
+        assert resp == "Hello Alex."
 
     def test_19_composite_metric_matching_accuracy(self):
         """ Test 19: Multi-sample gallery + centroid composite matching recognizes slightly perturbed poses """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         samples = [create_synthetic_face_image(seed=6000 + i, contrast=40 + i * 2) for i in range(10)]
-        pid = mem.save_person("Sharath", face_crop=samples[0], additional_samples=samples[1:])
+        pid = mem.save_person("Alex", face_crop=samples[0], additional_samples=samples[1:])
 
         # Query with slightly perturbed test sample
         test_sample = create_synthetic_face_image(seed=6005, contrast=44)
@@ -401,14 +401,14 @@ class TestVoiceMultiSampleEnrollment:
         match = mem.match_face_embedding(q_emb)
 
         assert match["state"] == "KNOWN"
-        assert match["name"] == "Sharath"
+        assert match["name"] == "Alex"
         assert match["confidence"] >= 0.65
 
     def test_20_deterministic_perception_no_llm_leak(self):
         """ Test 20: Perception intents route deterministically with no LLM/Gemini API calls """
         engine = VisionEngine(data_dir=TEST_DATA_DIR)
         queries = [
-            "Remember my face as Sharath",
+            "Remember my face as Alex",
             "Who is in front of me?",
             "Introduce yourself",
             "What is SG CUBE?",
@@ -424,7 +424,7 @@ class TestVoiceMultiSampleEnrollment:
         """ Test 21: Exactly 2 out of 5 confirmations fails enrollment (M=3 requirement not met) """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -455,13 +455,13 @@ class TestVoiceMultiSampleEnrollment:
         assert session.state == "FAILED"
         assert final_res["status"] == "FAILED"
         assert not final_res["success"]
-        assert "Sharath" not in mem.list_people()
+        assert "Alex" not in mem.list_people()
 
     def test_22_verification_3_of_5_confirms_passes(self):
         """ Test 22: Exactly 3 out of 5 confirmations passes enrollment """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -492,13 +492,13 @@ class TestVoiceMultiSampleEnrollment:
         assert session.state == "COMPLETED"
         assert final_res["status"] == "COMPLETED"
         assert final_res["success"]
-        assert "Sharath" in mem.list_people()
+        assert "Alex" in mem.list_people()
 
     def test_23_verification_5_of_5_confirms_passes(self):
         """ Test 23: 5 out of 5 consecutive confirmations smoothly passes enrollment on 3rd confirmation """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -521,13 +521,13 @@ class TestVoiceMultiSampleEnrollment:
 
         assert res["status"] == "COMPLETED"
         assert res["success"]
-        assert "Sharath" in mem.list_people()
+        assert "Alex" in mem.list_people()
 
     def test_24_verification_no_liveness_fails(self):
         """ Test 24: Presentation attack / spoof detection during verification fails enrollment """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSpoof:
             def __init__(self):
@@ -556,13 +556,13 @@ class TestVoiceMultiSampleEnrollment:
 
         assert session.state == "FAILED"
         assert res["status"] == "FAILED"
-        assert "Sharath" not in mem.list_people()
+        assert "Alex" not in mem.list_people()
 
     def test_25_verification_poor_quality_fails(self):
         """ Test 25: Verification frames with poor quality (blurry/dark) fail enrollment """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR)
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -585,7 +585,7 @@ class TestVoiceMultiSampleEnrollment:
 
         assert session.state == "FAILED"
         assert res["status"] == "FAILED"
-        assert "Sharath" not in mem.list_people()
+        assert "Alex" not in mem.list_people()
 
     def test_26_verification_ambiguous_identity_fails(self):
         """ Test 26: Verification frame matching too closely to an existing different person (ambiguity < margin) fails """
@@ -595,7 +595,7 @@ class TestVoiceMultiSampleEnrollment:
         mem.save_person("Rahul", rahul_img)
 
         session = FaceEnrollmentSession(target_samples=25, verification_required_confirms=3, verification_max_frames=5)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         class MockRecSingle:
             def detect_faces_detailed(self, frame):
@@ -605,27 +605,27 @@ class TestVoiceMultiSampleEnrollment:
 
         mock_rec = MockRecSingle()
 
-        # Enroll Sharath with diverse frames that are close to Rahul
+        # Enroll Alex with diverse frames that are close to Rahul
         for s in range(25):
             img = create_synthetic_face_image(seed=12000 + s, contrast=45)
             session.process_frame(img, mock_rec, mem)
 
         assert session.state == "VERIFYING"
 
-        # During verification, test frame gives identical/near-identical score for Rahul and Sharath -> margin is < 0.05 -> fails!
+        # During verification, test frame gives identical/near-identical score for Rahul and Alex -> margin is < 0.05 -> fails!
         for _ in range(5):
             res = session.process_frame(rahul_img, mock_rec, mem)
 
         assert session.state == "FAILED"
         assert res["status"] == "FAILED"
-        # Sharath was not saved; Rahul remains intact
-        assert "Sharath" not in mem.list_people()
+        # Alex was not saved; Rahul remains intact
+        assert "Alex" not in mem.list_people()
         assert "Rahul" in mem.list_people()
 
     def test_27_enrollment_frames_cannot_be_reused_as_verification(self):
         """ Test 27: Verification evaluations strictly require new incoming frames, cannot reuse session buffers """
         session = FaceEnrollmentSession(target_samples=25)
-        session.start_session("Sharath")
+        session.start_session("Alex")
 
         # In GUIDING_POSES / COLLECTING_SAMPLES
         assert session.verification_frames_collected == 0
@@ -649,7 +649,7 @@ class TestVoiceMultiSampleEnrollment:
         # Even though 25 samples are accepted, verification count is 0 until fresh frames arrive
         assert session.verification_frames_collected == 0
         assert session.verification_confirmed_count == 0
-        assert "Sharath" not in mem.list_people()
+        assert "Alex" not in mem.list_people()
 
     def test_28_failed_enrollment_leaves_existing_profiles_unchanged(self):
         """ Test 28: Failed enrollment does not corrupt, overwrite, or delete existing profiles in FaceMemory """

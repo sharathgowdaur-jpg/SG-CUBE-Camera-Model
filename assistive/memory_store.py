@@ -31,7 +31,17 @@ DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 class MemoryStore:
     def __init__(self, base_dir: str = None):
         if base_dir is None or base_dir == "data":
-            self.base_dir = DEFAULT_DATA_DIR
+            env_dir = os.getenv("SGCUBE_USER_DATA")
+            if env_dir:
+                self.base_dir = os.path.abspath(env_dir)
+            elif os.name == 'nt' and os.getenv("LOCALAPPDATA"):
+                installed_p = os.path.join(os.getenv("LOCALAPPDATA"), "Programs", "SG-CUBE", "data")
+                if os.path.exists(installed_p):
+                    self.base_dir = installed_p
+                else:
+                    self.base_dir = DEFAULT_DATA_DIR
+            else:
+                self.base_dir = DEFAULT_DATA_DIR
         else:
             self.base_dir = os.path.abspath(base_dir)
 

@@ -37,7 +37,7 @@ from assistive.command_router import CommandRouter
 class TestProtectedMemoryIntegration(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="sgcube_p4_test_")
-        self.engine = VisionEngine(data_dir=self.test_dir)
+        self.engine = VisionEngine(data_dir=self.test_dir, per_request_auth=False)
         self.router = CommandRouter()
         self.passphrase = "whispering northern winds"
 

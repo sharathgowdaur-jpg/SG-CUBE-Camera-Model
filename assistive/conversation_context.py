@@ -44,6 +44,8 @@ class TopicType(Enum):
     DOCUMENT_UNDERSTANDING = "DOCUMENT_UNDERSTANDING"
     SYSTEM_AUTOMATION = "SYSTEM_AUTOMATION"
     PROACTIVE_ALERT = "PROACTIVE_ALERT"
+    MEDIA = "MEDIA"
+    NOTES = "NOTES"
     ENVIRONMENT = "ENVIRONMENT"
     SAFETY = "SAFETY"
 
@@ -104,6 +106,31 @@ class ActiveAutomationRef:
             "request_id": self.request_id,
             "requires_confirmation": self.requires_confirmation,
             "requires_security_auth": self.requires_security_auth,
+            "timestamp": self.timestamp
+        }
+
+
+@dataclass
+class ActiveMediaRef:
+    """
+    Transient reference to currently playing or queried media (e.g. YouTube video, music track).
+    """
+    title: str
+    platform: str = "youtube"
+    url: Optional[str] = None
+    is_playing: bool = True
+    timestamp: float = field(default_factory=time.time)
+
+    def is_expired(self, ttl_seconds: float = 600.0, current_time: Optional[float] = None) -> bool:
+        now = current_time if current_time is not None else time.time()
+        return (now - self.timestamp) > ttl_seconds
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "title": self.title,
+            "platform": self.platform,
+            "url": self.url,
+            "is_playing": self.is_playing,
             "timestamp": self.timestamp
         }
 
@@ -355,6 +382,8 @@ class ConversationContextManager:
         r'\b(?:that\s+document|this\s+document|the\s+document|that\s+receipt|this\s+receipt|that\s+bill|this\s+bill|that\s+menu|this\s+menu|that\s+page|this\s+page|that\s+label|this\s+label)\b',
         r'\b(?:that\s+app|this\s+app|the\s+app|the\s+application|that\s+application|this\s+application)\b',
         r'\b(?:that\s+alert|this\s+alert|the\s+alert|that\s+warning|this\s+warning|the\s+warning|that\s+obstacle|this\s+obstacle)\b',
+        r'\b(?:that\s+song|this\s+song|the\s+song|that\s+music|this\s+music|the\s+music|that\s+track|this\s+track|the\s+track|that\s+video|this\s+video|the\s+video|next\s+one|previous\s+one)\b',
+        r'\b(?:that\s+note|this\s+note|the\s+note)\b',
         r'\b(?:he|she|him|her|they|that\s+person|this\s+person|the\s+person|the\s+other\s+person)\b'
     ]
 
@@ -372,6 +401,8 @@ class ConversationContextManager:
         self.active_scene: Optional[ActiveSceneRef] = None
         self.active_automation: Optional[ActiveAutomationRef] = None
         self.active_alert: Optional[ActiveAlertRef] = None
+        self.active_media: Optional[ActiveMediaRef] = None
+        self.active_note: Optional[Dict[str, Any]] = None
         self.pending_automation: Optional[Any] = None
         self.pending_clarification: Optional[PendingClarification] = None
 
@@ -397,6 +428,8 @@ class ConversationContextManager:
             self.active_scene = None
             self.active_automation = None
             self.active_alert = None
+            self.active_media = None
+            self.active_note = None
             self.pending_automation = None
             self.pending_clarification = None
             self._turn_counter = 0
@@ -435,6 +468,9 @@ class ConversationContextManager:
 
             if self.active_alert and self.active_alert.is_expired(self.ALERT_TTL, now):
                 self.active_alert = None
+
+            if self.active_media and self.active_media.is_expired(600.0, now):
+                self.active_media = None
 
             if self.pending_automation:
                 is_exp = False
@@ -775,6 +811,54 @@ class ConversationContextManager:
 
             return alert_ref
 
+    def set_active_media(
+        self,
+        title: str,
+        platform: str = "youtube",
+        url: Optional[str] = None,
+        is_playing: bool = True,
+        current_time: Optional[float] = None
+    ) -> ActiveMediaRef:
+        """
+        Sets the active media reference for contextual multi-turn playback control.
+        """
+        now = current_time if current_time is not None else time.time()
+        with self._lock:
+            media_ref = ActiveMediaRef(
+                title=title.strip(),
+                platform=platform,
+                url=url,
+                is_playing=is_playing,
+                timestamp=now
+            )
+            self.active_media = media_ref
+            self.active_topic = TopicType.MEDIA
+            self.state = ConversationState.TOPIC_ACTIVE
+            return media_ref
+
+    def set_active_note(
+        self,
+        note_id: Optional[int] = None,
+        title: Optional[str] = None,
+        text: str = "",
+        current_time: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Sets the active note reference in conversational context.
+        """
+        now = current_time if current_time is not None else time.time()
+        with self._lock:
+            note_dict = {
+                "id": note_id,
+                "title": title or "",
+                "text": text,
+                "timestamp": now
+            }
+            self.active_note = note_dict
+            self.active_topic = TopicType.NOTES
+            self.state = ConversationState.TOPIC_ACTIVE
+            return note_dict
+
     # -------------------------------------------------------------------------
     # 3. DETERMINISTIC REFERENCE RESOLUTION
     # -------------------------------------------------------------------------
@@ -869,6 +953,19 @@ class ConversationContextManager:
         is_auto_ref = any(w in clean_q for w in ["close it", "close that", "close that app", "close the app", "open it", "open that", "open that app", "open the app", "that app", "this app", "the app", "that application", "this application"])
         if (is_auto_ref or self.active_topic == TopicType.SYSTEM_AUTOMATION) and self.active_automation and not self.active_automation.is_expired(self.AUTOMATION_TTL, now):
             return self.active_automation.display_name or self.active_automation.target, "automation", False, None
+
+        is_media_ref = any(w in clean_q for w in [
+            "next one", "next song", "next track", "pause it", "pause that",
+            "resume it", "resume that", "stop it", "previous one", "previous song",
+            "the song", "the music", "that song", "that music", "that video"
+        ])
+        if (is_media_ref or self.active_topic == TopicType.MEDIA) and self.active_media and not self.active_media.is_expired(600.0, now):
+            return self.active_media.title, "media", False, None
+
+        is_note_ref = any(w in clean_q for w in ["that note", "this note", "the note"])
+        if (is_note_ref or self.active_topic == TopicType.NOTES) and self.active_note:
+            note_title = self.active_note.get("title") or self.active_note.get("text", "")
+            return note_title, "note", False, None
 
         if is_reminder_ref and self.active_reminder and not self.active_reminder.is_expired(self.REMINDER_TTL, now):
             return self.active_reminder.title, "reminder", False, None

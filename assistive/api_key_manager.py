@@ -20,14 +20,18 @@ def _resolve_pref_dir(pref_dir: Optional[str] = None) -> str:
     if os.name == 'nt':
         local_appdata = os.getenv("LOCALAPPDATA")
         if local_appdata:
-            p1 = os.path.join(local_appdata, "SG CUBE", "data", "user_preferences")
-            if os.path.exists(os.path.join(local_appdata, "SG CUBE", "data")):
-                os.makedirs(p1, exist_ok=True)
-                return p1
             p2 = os.path.join(local_appdata, "Programs", "SG-CUBE", "data", "user_preferences")
+            if os.path.exists(os.path.join(p2, "multi_api_credentials.dat")):
+                return p2
+            p1 = os.path.join(local_appdata, "SG CUBE", "data", "user_preferences")
+            if os.path.exists(os.path.join(p1, "multi_api_credentials.dat")):
+                return p1
             if os.path.exists(os.path.join(local_appdata, "Programs", "SG-CUBE", "data")):
                 os.makedirs(p2, exist_ok=True)
                 return p2
+            if os.path.exists(os.path.join(local_appdata, "SG CUBE", "data")):
+                os.makedirs(p1, exist_ok=True)
+                return p1
     return DEFAULT_PREF_DIR
 
 # Stored credentials carry the scheme that produced them, so a file written by an

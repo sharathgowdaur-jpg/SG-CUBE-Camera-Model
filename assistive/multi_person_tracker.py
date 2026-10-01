@@ -267,7 +267,7 @@ class MultiPersonTracker:
         self.next_track_id: int = 1
 
         # Track history of announced events to prevent duplicate spam
-        # Maps event_key (e.g., 'ENTER:Sharath' or 'ENTER:track_1') -> timestamp
+        # Maps event_key (e.g., 'ENTER:Alex' or 'ENTER:track_1') -> timestamp
         self._announced_events: Dict[str, float] = {}
 
     def reset(self):
@@ -608,7 +608,7 @@ class MultiPersonTracker:
             return f"I recognize {', '.join(names[:-1])} and {names[-1]}."
 
         # ---------------------------------------------------------------------
-        # E. SPECIFIC PERSON LOCATION QUERY ("Where is Sharath?")
+        # E. SPECIFIC PERSON LOCATION QUERY ("Where is Alex?")
         # ---------------------------------------------------------------------
         elif intent == "PERSON_LOCATION_QUERY":
             target_name = p.get("name") or p.get("person_name") or ""

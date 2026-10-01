@@ -1,5 +1,8 @@
 import os
+import re
+import uuid
 import time
+import datetime
 import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
@@ -18,6 +21,7 @@ from .environment_monitor import EnvironmentMonitor
 from .command_router import CommandRouter, OFFICIAL_INTRODUCTION
 from .response_manager import ResponseManager
 from .memory_manager import MemoryManager, is_credential_secret, is_sensitive_personal_info
+from .local_memory_v2 import LocalMemoryService, SingleUseAuthToken, LocalMemoryV2Migrator
 from .conversation_history import ConversationHistory
 from .api_key_manager import APIKeyManager
 from .secure_vault.secure_vault_controller import SecureVaultController
@@ -30,9 +34,19 @@ from .secure_vault.security_audio_pipeline import (
 )
 from .color_detector import ColorDetector
 from .product_scanner import ProductScanner
-from .meta_glass import MetaGlassBridge
-from .security_manager import SecurityManager, SecurityLevel, SecurityState
 from .smart_object_finder import SmartObjectFinder, ObjectFinderState, LastSeenObservation, ActiveSearchSession
+from .security_manager import SecurityManager, SecurityLevel, SecurityState
+from .security_audit_log import SecurityAuditLog
+from .authorization_policy import (
+    AuthorizationPolicy,
+    AuthorizationRequest,
+    AuthorizationResult,
+    OperationType,
+    PolicyDecision,
+    TrustedAction,
+    TrustedActionAllowlist
+)
+from .log_redaction import install_log_redaction_filter, get_global_redactor
 from .task_manager import (
     TaskManager,
     TaskItem,
@@ -80,6 +94,16 @@ from .proactive_alert_manager import (
     AlertMode,
     AlertEvent
 )
+from .computer_use import ComputerUseAgent
+from .system_control import get_system_control, SystemControl
+from .interaction_artifacts import get_artifact_cache, InteractionArtifactCache
+from .health_diagnostics import get_health_diagnostics, HealthDiagnostics
+from .task_planner import CompoundTaskPlanner
+from .mouse_controller import get_mouse_controller, MouseController
+from .settings_controller import get_settings_controller, SettingsController
+from .notepad_controller import get_notepad_controller, NotepadController
+from .screenshot_controller import get_screenshot_controller, ScreenshotController
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
@@ -103,7 +127,6 @@ class VisionEngine:
         self.memory = MemoryManager(db_dir=os.path.join(self.data_dir, "memory"))
         self.history = ConversationHistory(db_dir=os.path.join(self.data_dir, "history"))
         self.key_manager = APIKeyManager(pref_dir=self.store.pref_dir)
-        self.meta_glass = MetaGlassBridge()
 
         threshold = self.store.get_setting("recognition_threshold", 0.55)
         cooldown = self.store.get_setting("greeting_cooldown_seconds", 30.0)
@@ -134,14 +157,42 @@ class VisionEngine:
             self.monitor.set_mode("continuous")
 
         self.router = CommandRouter()
+        self.command_router = self.router
         self.response_manager = ResponseManager(announcement_cooldown=ann_cooldown)
-        self.security = SecurityManager(pref_dir=self.store.pref_dir, store=self.store)
+        self.local_memory = LocalMemoryService(self.data_dir)
+        self.local_migrator = LocalMemoryV2Migrator(self.local_memory, legacy_data_dir=self.data_dir)
+        try:
+            if not self.local_migrator.is_migrated():
+                self.local_migrator.migrate()
+        except Exception:
+            pass
+        self._active_local_memory_token: Optional[SingleUseAuthToken] = None
+        self.security = SecurityManager(pref_dir=self.store.pref_dir, store=self.store, local_memory_service=self.local_memory)
+
+        # Security Audit Log (Append-only SQLite, enforces CP9 monotonic ordering)
+        audit_dir = os.path.join(self.data_dir, "security")
+        os.makedirs(audit_dir, exist_ok=True)
+        self.audit_log = SecurityAuditLog(data_dir=audit_dir)
+
+        # Authoritative Authorization Policy (Adapted from rofiperlungoding/jarvis)
+        self.auth_policy = AuthorizationPolicy(
+            audit=self.audit_log,
+            gate=getattr(self.local_memory, "gate", None),
+            security_manager=self.security
+        )
+
+        # Process-wide Log Redaction Filter
+        self.log_redactor = get_global_redactor()
+        install_log_redaction_filter()
+
         vault_dir = os.path.join(self.data_dir, "secure_vault")
         os.makedirs(vault_dir, exist_ok=True)
         self.vault = SecureVaultController(
             db_path=os.path.join(vault_dir, "vault.db"),
             verifier_file=os.path.join(vault_dir, "vault_verifier.json")
         )
+        if hasattr(self, "security") and self.security is not None:
+            self.security.vault = self.vault
         if per_request_auth is not None:
             self.per_request_auth = per_request_auth
         else:
@@ -149,6 +200,8 @@ class VisionEngine:
 
         if self.per_request_auth:
             self.vault.enable_per_request_auth()
+            if hasattr(self, "auth_policy"):
+                self.auth_policy.per_request_mode = True
 
         # Dedicated Local Security Audio Pipeline (Silero VAD + faster-whisper + ECAPA-TDNN)
         self.audio_arbitrator = AudioArbitrator()
@@ -159,6 +212,13 @@ class VisionEngine:
 
         # Permission-Based System Automation Engine (SG CUBE 2.5 Feature 9)
         self.automation = AutomationManager(pref_dir=self.store.pref_dir, security_manager=self.security)
+
+        # Bounded Computer-Use Subsystem (Phase 2 Integration)
+        self.computer_use = ComputerUseAgent(
+            api_key_manager=self.key_manager,
+            automation_manager=self.automation,
+            max_steps=5
+        )
 
         # Continuous Conversation Context Engine (SG CUBE 2.5 Feature 6)
         self.context = ConversationContextManager()
@@ -188,6 +248,18 @@ class VisionEngine:
         if self.store.get_setting("reminders_scheduler_enabled", True):
             self.scheduler.start()
 
+        # Native Windows & System Control Subsystems (Steven Saint & InterGenJLU JARVIS Architectures)
+        self.system_control = get_system_control()
+        self.artifact_cache = get_artifact_cache()
+        self.health_diagnostics = get_health_diagnostics()
+        self.task_planner = CompoundTaskPlanner(max_steps=5)
+        self.mouse_controller = get_mouse_controller()
+        self.settings_controller = get_settings_controller()
+        self.notepad_controller = get_notepad_controller()
+        self.screenshot_controller = get_screenshot_controller()
+        self.last_opened_item: Optional[str] = None
+        self.last_action_summary: Optional[str] = None
+
         # Per-frame perception state
         self.current_frame: Optional[np.ndarray] = None
         self.last_faces: List[Dict] = []
@@ -208,12 +280,16 @@ class VisionEngine:
         self.per_request_auth = True
         if hasattr(self, "vault"):
             self.vault.enable_per_request_auth()
+        if hasattr(self, "auth_policy"):
+            self.auth_policy.per_request_mode = True
 
     def disable_per_request_auth(self):
         """ Disables per-request authorization mode """
         self.per_request_auth = False
         if hasattr(self, "vault"):
             self.vault.disable_per_request_auth()
+        if hasattr(self, "auth_policy"):
+            self.auth_policy.per_request_mode = False
 
     def process_security_challenge_audio(
         self,
@@ -222,15 +298,81 @@ class VisionEngine:
         speaker_threshold: float = 0.65
     ) -> Tuple[bool, str]:
         """
-        Processes local security challenge audio using Silero VAD, faster-whisper, and ECAPA-TDNN.
+        Processes local security challenge audio using Secure Local Memory V2 offline pipeline.
         Returns (success: bool, spoken_response: str).
         """
-        has_speaker_profile = os.path.exists(self.security_audio_coordinator.speaker_profile_path)
+        if hasattr(self, "local_memory") and self.local_memory.is_password_configured():
+            has_speaker_profile = os.path.exists(self.security_audio_coordinator.speaker_profile_path)
+            if has_speaker_profile:
+                vad_audio = self.security_audio_coordinator.vad.extract_clean_speech(raw_pcm_bytes)
+                if vad_audio is None:
+                    if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                        self.audio_arbitrator.return_to_gemini()
+                    return False, "No clean speech detected for voice authentication."
+                spk_match, sim, _ = self.security_audio_coordinator.ecapa.verify_speaker(
+                    vad_audio,
+                    self.security_audio_coordinator.speaker_profile_path,
+                    threshold=speaker_threshold
+                )
+                if not spk_match:
+                    self.security.lock_session()
+                    self.vault.lock()
+                    self.security.current_state = SecurityState.IDLE
+                    self.security._pending_action = None
+                    self.context.state = ConversationState.IDLE
+                    if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                        self.audio_arbitrator.return_to_gemini()
+                    return False, "Voice authentication failed. Speaker identity mismatch. Access denied."
 
+            ok, msg, token = self.local_memory.authenticate_voice_pcm(raw_pcm_bytes, operation="VOICE_CHALLENGE")
+            if ok and token:
+                self._active_local_memory_token = token
+                self.security.authorize_session(60.0)
+                if self.per_request_auth:
+                    self.vault.authorize_one_operation(self.security)
+                else:
+                    self.vault.sync_with_security_manager(self.security)
+                is_unlocked = self.vault.is_unlocked() if hasattr(self, 'vault') and self.vault else True
+                print(f"[VOICE-PASSWORD] vault_unlock={'PASS' if is_unlocked else 'FAIL'}")
+
+                if self.security._pending_action:
+                    pending = self.security._pending_action
+                    self.security._pending_action = None
+                    self.security.current_state = SecurityState.IDLE
+                    self.context.state = ConversationState.IDLE
+                    try:
+                        exec_res = self._execute_intent(
+                            pending["intent"],
+                            pending["route"],
+                            pending["transcript"],
+                            session_id=session_id
+                        )
+                        return True, f"Access granted. {exec_res}" if exec_res else "Access granted."
+                    finally:
+                        self._active_local_memory_token = None
+                        if self.per_request_auth:
+                            self.vault.consume_authorization()
+                            self.security.lock_session()
+                        if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                            self.audio_arbitrator.return_to_gemini()
+
+                self._active_local_memory_token = None
+                if self.per_request_auth:
+                    self.security.lock_session()
+                self.security.current_state = SecurityState.IDLE
+                self.context.state = ConversationState.IDLE
+                if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                    self.audio_arbitrator.return_to_gemini()
+                return True, "Access granted."
+
+        # Process through SecurityAudioChallengeCoordinator (Silero VAD + Whisper + ECAPA + candidate matching)
+        has_speaker_profile = os.path.exists(self.security_audio_coordinator.speaker_profile_path)
+        vault_auth = self.vault.authenticator if hasattr(self, 'vault') and self.vault and self.vault.is_setup() else None
         challenge_res = self.security_audio_coordinator.process_challenge_audio(
             raw_pcm_bytes,
             verifier_record=self.security._cached_verifier,
             security_manager=self.security,
+            vault_authenticator=vault_auth,
             speaker_threshold=speaker_threshold,
             require_speaker_verification=has_speaker_profile
         )
@@ -238,9 +380,46 @@ class VisionEngine:
         if challenge_res["success"]:
             norm_pw = challenge_res["normalized_transcript"]
             print(f"[SECURITY-AUDIO] Audio verification PASSED: '[VOICE_PASSWORD_REDACTED]'")
-            resp = self.process_user_speech_query(norm_pw, session_id=session_id)
-            return True, resp or "Password verified. Proceeding."
+            self.security.authorize_session(60.0)
+            if hasattr(self, 'vault') and self.vault and self.vault.is_setup():
+                if self.per_request_auth:
+                    self.vault.authorize_one_operation(self.security)
+                else:
+                    self.vault.sync_with_security_manager(self.security)
+            is_unlocked = self.vault.is_unlocked() if hasattr(self, 'vault') and self.vault else True
+            print(f"[VOICE-PASSWORD] vault_unlock={'PASS' if is_unlocked else 'FAIL'}")
+
+            if self.security._pending_action:
+                pending = self.security._pending_action
+                self.security._pending_action = None
+                self.security.current_state = SecurityState.IDLE
+                self.context.state = ConversationState.IDLE
+                try:
+                    exec_res = self._execute_intent(
+                        pending["intent"],
+                        pending["route"],
+                        pending["transcript"],
+                        session_id=session_id
+                    )
+                    return True, f"Access granted. {exec_res}" if exec_res else "Access granted."
+                finally:
+                    if self.per_request_auth:
+                        self.vault.consume_authorization()
+                        self.security.lock_session()
+                    if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                        self.audio_arbitrator.return_to_gemini()
+
+            if self.per_request_auth:
+                self.security.lock_session()
+            self.security.current_state = SecurityState.IDLE
+            self.context.state = ConversationState.IDLE
+            if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                self.audio_arbitrator.return_to_gemini()
+            return True, "Access granted."
         else:
+            print("[VOICE-PASSWORD] vault_unlock=FAIL")
+            if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                self.audio_arbitrator.return_to_gemini()
             err = challenge_res.get("error")
             if err:
                 self.security.current_state = SecurityState.IDLE
@@ -528,11 +707,51 @@ class VisionEngine:
         # Check for Context Reset intent immediately
         route = self.router.route_intent(user_transcript)
         intent = route["intent"]
-        if intent == "CONTEXT_RESET":
+        if intent in ("CONTEXT_RESET", "AUTOMATION_CANCEL", "COMPUTER_ACTION_CANCEL") or user_transcript.strip().lower() in ("cancel", "stop", "abort", "nevermind", "cancel action", "halt"):
             self.context.reset_context()
-            resp = "Conversation context cleared. Starting fresh."
+            self.context.state = ConversationState.IDLE
+            if hasattr(self, 'security') and self.security and self.security.current_state != SecurityState.IDLE:
+                if hasattr(self.security, '_pending_action') and self.security._pending_action:
+                    pending = self.security._pending_action
+                    req_id = pending.get("request_id")
+                    if hasattr(self, 'audit_log') and self.audit_log:
+                        self.audit_log.record_denied(
+                            operation=pending.get("intent", "UNKNOWN"),
+                            details=pending.get("route", {}).get("params", {}),
+                            outcome="cancelled_by_user",
+                            justification="User issued stop/cancel",
+                            request_id=req_id
+                        )
+                self.security.current_state = SecurityState.IDLE
+                self.security._temp_phrase_buffer = None
+                self.security._temp_recovery_buffer = None
+                self.security._pending_action = None
+            if hasattr(self, 'auth_policy') and self.auth_policy:
+                self.auth_policy.trigger_emergency_lockdown("user_stop_cancel_command")
+            if hasattr(self, 'computer_use_agent') and self.computer_use_agent:
+                self.computer_use_agent.cancel("User cancelled")
+            if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                try:
+                    self.audio_arbitrator.exit_security_challenge()
+                except Exception:
+                    pass
+            if hasattr(self, 'mouse_controller') and self.mouse_controller:
+                try:
+                    self.mouse_controller.stop()
+                except Exception:
+                    pass
+            if hasattr(self, 'notepad_controller') and self.notepad_controller:
+                try:
+                    self.notepad_controller.stop()
+                except Exception:
+                    pass
+            resp = "Action cancelled." if "cancel" in user_transcript.lower() or "abort" in user_transcript.lower() else "Conversation context cleared. Starting fresh."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
+
+        # Release emergency lockdown for fresh operational turn if applicable
+        if hasattr(self, 'auth_policy') and self.auth_policy and getattr(self.auth_policy, '_emergency_lockdown', False):
+            self.auth_policy.release_emergency_lockdown()
 
         # 1. Interactive Multi-Turn Security Check (Set / Change / Challenge / Remove)
         if self.security.current_state != SecurityState.IDLE:
@@ -542,8 +761,13 @@ class VisionEngine:
                 if sec_res.get("action") == "EXECUTE_PENDING":
                     pending = sec_res.get("pending_action")
                     if pending:
+                        req_id = pending.get("request_id")
                         if self.per_request_auth:
                             self.vault.authorize_one_operation(self.security)
+                            try:
+                                self._active_local_memory_token = self.local_memory.gate.create_single_use_token()
+                            except Exception:
+                                pass
                         else:
                             self.vault.sync_with_security_manager(self.security)
                         try:
@@ -553,9 +777,20 @@ class VisionEngine:
                                 pending["transcript"],
                                 session_id=session_id
                             )
+                            # Record executed entry (strictly after confirmation_requested) enforcing CP9
+                            if hasattr(self, 'audit_log') and self.audit_log:
+                                self.audit_log.record_executed(
+                                    operation=pending["intent"],
+                                    details=pending.get("route", {}).get("params", {}),
+                                    outcome="ok",
+                                    request_id=req_id
+                                )
                         finally:
                             if self.per_request_auth:
                                 self.vault.consume_authorization()
+                                if self._active_local_memory_token and not self._active_local_memory_token.is_consumed():
+                                    self._active_local_memory_token.consume()
+                                self._active_local_memory_token = None
                         if exec_res:
                             resp_text = f"Password verified. Proceeding. {exec_res}"
                         else:
@@ -731,6 +966,36 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        elif intent == "VAULT_OPEN":
+            if not self.vault.is_setup():
+                resp = "Password vault is not configured yet. Please configure your password vault in settings or first-time setup."
+                self.response_manager.add_response(resp, priority=2, force=True)
+                return resp
+
+            if self.vault.is_unlocked():
+                recs = self.vault.list_records_decrypted()
+                resp = f"Password vault is open. You have {len(recs)} credentials stored."
+                self.response_manager.add_response(resp, priority=2, force=True)
+                return resp
+
+            if self.security.is_configured():
+                self.context.state = ConversationState.SECURITY_CHALLENGE
+                if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
+                    self.audio_arbitrator.enter_security_challenge()
+                self.security.start_challenge({
+                    "intent": "VAULT_OPEN",
+                    "route": route,
+                    "transcript": user_transcript,
+                    "level": SecurityLevel.PROTECTED
+                })
+                challenge_msg = "Your password vault is locked. Please speak your voice password or sensitive password."
+                self.response_manager.add_response(challenge_msg, priority=2, force=True)
+                return challenge_msg
+            else:
+                resp = "Your password vault is locked. Please unlock it using your master password in the vault dashboard."
+                self.response_manager.add_response(resp, priority=2, force=True)
+                return resp
+
         # 4. Central Security Policy Gate (PROTECTED / HIGH_RISK)
         level = self.security.get_security_level(intent)
         is_sensitive_req = False
@@ -769,22 +1034,81 @@ class VisionEngine:
             level = SecurityLevel.PROTECTED
 
         if level in (SecurityLevel.PROTECTED, SecurityLevel.HIGH_RISK):
-            if not self.security.is_configured():
+            # Formulate AuthorizationRequest
+            op_type = (
+                OperationType.PROTECTED_MEMORY_READ if intent in ("MEMORY_RECALL", "VAULT_RECALL")
+                else OperationType.PROTECTED_MEMORY_WRITE if intent in ("MEMORY_SAVE", "VAULT_SAVE")
+                else OperationType.PROTECTED_MEMORY_DELETE if intent == "MEMORY_FORGET"
+                else OperationType.DESTRUCTIVE_ACTION if level == SecurityLevel.HIGH_RISK
+                else OperationType.SYSTEM_CONTROL
+            )
+            req_id = str(uuid.uuid4())
+            auth_req = AuthorizationRequest(
+                operation_type=op_type,
+                action_name=intent,
+                arguments=route.get("params", {}) if route else {},
+                user_transcript=user_transcript,
+                auth_token=self._active_local_memory_token,
+                request_id=req_id
+            )
+            # Evaluate through Authoritative AuthorizationPolicy
+            auth_result = self.auth_policy.evaluate_request(auth_req)
+
+            if auth_result.decision == PolicyDecision.DENY:
+                self.audit_log.record_denied(
+                    operation=intent,
+                    details=auth_req.arguments,
+                    outcome="denied_by_policy",
+                    justification=auth_result.reason_code,
+                    request_id=req_id
+                )
+                resp = f"Action denied: {auth_result.reason_code}"
+                self.response_manager.add_response(resp, priority=2, force=True)
+                return resp
+
+            if not self.local_memory.is_password_configured() and not self.security.is_configured():
                 if intent in ("VAULT_SAVE", "VAULT_RECALL") or (intent in ("MEMORY_RECALL", "MEMORY_SAVE") and is_sensitive_req):
+                    self.audit_log.record_denied(
+                        operation=intent,
+                        details=auth_req.arguments,
+                        outcome="password_not_configured",
+                        justification="Password not set",
+                        request_id=req_id
+                    )
                     resp = "Voice security password is not configured. Please set your voice security password first."
                     self.response_manager.add_response(resp, priority=2, force=True)
                     return resp
             else:
+                is_lock, rem = self.security.is_locked_out()
+                if is_lock:
+                    self.audit_log.record_denied(
+                        operation=intent,
+                        details=auth_req.arguments,
+                        outcome="locked_out",
+                        justification=f"Locked out for {rem} seconds",
+                        request_id=req_id
+                    )
+                    resp = f"Voice security password is configured and currently locked for {rem} seconds."
+                    self.response_manager.add_response(resp, priority=2, force=True)
+                    return resp
+
                 is_protected_mem = (
                     intent in ("VAULT_SAVE", "VAULT_RECALL")
                     or (intent in ("MEMORY_RECALL", "MEMORY_SAVE", "MEMORY_FORGET") and is_sensitive_req)
                 )
                 if self.per_request_auth and is_protected_mem:
-                    is_auth = self.vault.is_operation_authorized()
+                    token = self._active_local_memory_token
+                    is_auth = (token is not None and not token.is_consumed()) or self.vault.is_operation_authorized()
                 else:
                     is_auth = self.security.is_session_authorized()
 
                 if not is_auth:
+                    # Enforce Property CP9: confirmation_requested MUST be logged BEFORE asking the user
+                    self.audit_log.record_confirmation_requested(
+                        operation=intent,
+                        details=auth_req.arguments,
+                        request_id=req_id
+                    )
                     self.context.state = ConversationState.SECURITY_CHALLENGE
                     if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
                         self.audio_arbitrator.enter_security_challenge()
@@ -792,9 +1116,10 @@ class VisionEngine:
                         "intent": intent,
                         "route": route,
                         "transcript": user_transcript,
-                        "level": level
+                        "level": level,
+                        "request_id": req_id
                     })
-                    challenge_msg = "This is a protected action and protected information. Please say your voice password or sensitive password."
+                    challenge_msg = "This is a protected action and protected information. Please speak your voice password or sensitive password."
                     self.response_manager.add_response(challenge_msg, priority=2, force=True)
                     return challenge_msg
 
@@ -802,6 +1127,13 @@ class VisionEngine:
             if level == SecurityLevel.HIGH_RISK and self.security.is_face_2fa_required():
                 face_ok, face_msg, face_user = self.security.evaluate_live_face_2fa(self.last_faces)
                 if not face_ok:
+                    self.audit_log.record_denied(
+                        operation=intent,
+                        details=auth_req.arguments,
+                        outcome="face_2fa_failed",
+                        justification=face_msg,
+                        request_id=req_id
+                    )
                     resp = f"Action denied. High-risk actions require live face confirmation. {face_msg}"
                     self.response_manager.add_response(resp, priority=2, force=True)
                     return resp
@@ -809,7 +1141,18 @@ class VisionEngine:
         # 5. Normal Intent Execution
         resp = self._execute_intent(intent, route, user_transcript, session_id=session_id)
         if resp:
-            self.context.add_turn(user_transcript, resp, intent=intent, topic=self.context.active_topic)
+            if hasattr(self, 'audit_log') and self.audit_log and level in (SecurityLevel.PROTECTED, SecurityLevel.HIGH_RISK):
+                if 'auth_req' in locals() and auth_req:
+                    self.audit_log.record_executed(
+                        operation=intent,
+                        details=auth_req.arguments,
+                        outcome="authorized_direct",
+                        request_id=auth_req.request_id
+                    )
+            if intent == "SLEEP":
+                self.context.state = ConversationState.IDLE
+            else:
+                self.context.add_turn(user_transcript, resp, intent=intent, topic=self.context.active_topic)
         return resp
 
     def _execute_intent(self, intent: str, route: Dict, user_transcript: str, session_id: Optional[str] = None) -> Optional[str]:
@@ -857,12 +1200,20 @@ class VisionEngine:
                 )
 
                 if is_secret:
-                    if not self.security.is_configured():
+                    if not is_vault_explicit and (is_credential_secret(fact_str) or is_credential_secret(key)):
+                        resp = "For security reasons, I cannot store sensitive passwords or credentials in standard memory. Please use the secure password vault."
+                        self.response_manager.add_response(resp, priority=2, force=True)
+                        return resp
+
+                    if not self.local_memory.is_password_configured() and not self.security.is_configured():
                         resp = "Voice security password is not configured. Please set your voice security password first."
                         self.response_manager.add_response(resp, priority=2, force=True)
                         return resp
 
-                    is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
+                    token = self._active_local_memory_token
+                    if token is None and not self.per_request_auth and self.security.is_session_authorized():
+                        token = self.local_memory.gate.create_single_use_token()
+                    is_auth = (token is not None and not token.consumed) if self.per_request_auth else (self.security.is_session_authorized() or self.vault.is_operation_authorized())
                     if not is_auth:
                         challenge_msg = self.security.start_challenge({
                             "intent": intent,
@@ -870,44 +1221,51 @@ class VisionEngine:
                             "transcript": user_transcript,
                             "level": SecurityLevel.PROTECTED
                         })
-                        challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                        challenge_msg = "This is protected information. Please speak your voice password or sensitive password."
                         self.response_manager.add_response(challenge_msg, priority=2, force=True)
                         return challenge_msg
 
                     if not self.per_request_auth:
                         self.vault.sync_with_security_manager(self.security)
-                    success = self.vault.save_secure_record(key, fact_str)
+                    success, _ = self.local_memory.save_memory("sensitive", key, fact_str, is_sensitive=True, auth_token=token)
+                    self.vault.save_secure_record(key, fact_str)
                     if success:
                         resp = "Protected information saved securely in the vault."
                     else:
                         resp = "I couldn't save that protected information."
 
                 elif is_sensitive_personal_info(fact_str) or is_sensitive_personal_info(key):
-                    is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
-                    if self.security.is_configured() and not is_auth:
+                    token = self._active_local_memory_token
+                    if token is None and not self.per_request_auth and self.security.is_session_authorized():
+                        token = self.local_memory.gate.create_single_use_token()
+                    is_auth = ((token is not None and not token.consumed) or self.vault.is_operation_authorized()) if self.per_request_auth else (self.security.is_session_authorized() or self.vault.is_operation_authorized())
+                    if (self.local_memory.is_password_configured() or self.security.is_configured()) and not is_auth:
                         challenge_msg = self.security.start_challenge({
                             "intent": "MEMORY_SAVE",
                             "route": route,
                             "transcript": user_transcript,
                             "level": SecurityLevel.PROTECTED
                         })
+                        challenge_msg = "This is protected information. Please speak your voice password or sensitive password."
                         self.response_manager.add_response(challenge_msg, priority=2, force=True)
                         return challenge_msg
 
-                    success = self.memory.save_sensitive_memory("personal", key, fact_str)
+                    success, _ = self.local_memory.save_memory("personal", key, fact_str, is_sensitive=True, auth_token=token)
+                    self.memory.save_sensitive_memory("personal", key, fact_str)
                     if success:
                         resp = "Sensitive information saved securely."
                     else:
                         resp = "I couldn't save that sensitive information."
                 else:
-                    success = self.memory.save_memory("personal", key, fact_str)
-                    if success:
+                    success, _ = self.local_memory.save_memory("personal", key, fact_str, is_sensitive=False)
+                    ok_mem = self.memory.save_memory("personal", key, fact_str)
+                    if success and ok_mem is not False:
                         if fact_str.lower().startswith("my ") or fact_str.lower().startswith("that "):
                             resp = f"Got it. I will remember that {fact_str[0].lower() + fact_str[1:]}"
                         else:
                             resp = f"Got it. I will remember that {fact_str}"
                     else:
-                        resp = "I couldn't save that."
+                        resp = "I couldn't save that to memory right now."
             else:
                 resp = "What information would you like me to save?"
 
@@ -937,8 +1295,11 @@ class VisionEngine:
             ])
 
             if is_sensitive_req:
-                is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
-                if self.security.is_configured() and not is_auth:
+                token = self._active_local_memory_token
+                if token is None and not self.per_request_auth and self.security.is_session_authorized():
+                    token = self.local_memory.gate.create_single_use_token()
+                is_auth = ((token is not None and not token.consumed) or self.vault.is_operation_authorized()) if self.per_request_auth else (self.security.is_session_authorized() or self.vault.is_operation_authorized())
+                if (self.local_memory.is_password_configured() or self.security.is_configured()) and not is_auth:
                     self.context.state = ConversationState.SECURITY_CHALLENGE
                     if hasattr(self, 'audio_arbitrator') and self.audio_arbitrator:
                         self.audio_arbitrator.enter_security_challenge()
@@ -948,14 +1309,26 @@ class VisionEngine:
                         "transcript": user_transcript,
                         "level": SecurityLevel.PROTECTED
                     })
-                    challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                    challenge_msg = "This is protected information. Please speak your voice password or sensitive password."
                     self.response_manager.add_response(challenge_msg, priority=2, force=True)
                     return challenge_msg
 
-                # Active authorized session: check vault first, then fallback to sensitive memory
-                if not self.per_request_auth:
-                    self.vault.sync_with_security_manager(self.security)
-                recalled = self.vault.retrieve_secure_record_by_query(query)
+                # Active authorized session: check local_memory first, then vault, then memory
+                recalled = None
+                try:
+                    val, _ = self.local_memory.recall_memory(query, auth_token=token)
+                    recalled = val
+                except Exception:
+                    pass
+                if not recalled:
+                    if not self.per_request_auth:
+                        self.vault.sync_with_security_manager(self.security)
+                    recalled = self.vault.retrieve_secure_record_by_query(query)
+                    if not recalled:
+                        recalled = self.vault.retrieve_secure_record(query)
+                    target_param = route.get("params", {}).get("target") if (route and route.get("params")) else None
+                    if not recalled and target_param:
+                        recalled = self.vault.retrieve_secure_record(target_param) or self.vault.retrieve_secure_record_by_query(target_param)
                 if not recalled:
                     recalled = self.memory.recall_sensitive_memory(query)
                 if not recalled:
@@ -966,19 +1339,27 @@ class VisionEngine:
                 else:
                     resp = "I don't have a protected memory saved for that."
             else:
-                recalled = self.memory.recall_memory(query, category=category)
+                recalled = None
+                try:
+                    val, _ = self.local_memory.recall_memory(query, category=category)
+                    recalled = val
+                except Exception:
+                    pass
+                if not recalled:
+                    recalled = self.memory.recall_memory(query, category=category)
                 if recalled:
                     resp = f"I remember that {recalled[0].lower() + recalled[1:]}" if not recalled.lower().startswith("i ") and not recalled.lower().startswith("my ") else f"{recalled}"
                 else:
                     resp = "I don't have a specific memory saved for that."
 
-            entity = route["params"].get("entity")
-            if entity:
-                self.context.set_active_object(name=entity, location_description=resp)
-            elif category == "location":
-                clean_ent = re.sub(r'\s+location$', '', query, flags=re.IGNORECASE).strip()
-                if clean_ent:
-                    self.context.set_active_object(name=clean_ent, location_description=resp)
+            if not is_sensitive_req:
+                entity = route["params"].get("entity")
+                if entity:
+                    self.context.set_active_object(name=entity, location_description=resp)
+                elif category == "location":
+                    clean_ent = re.sub(r'\s+location$', '', query, flags=re.IGNORECASE).strip()
+                    if clean_ent:
+                        self.context.set_active_object(name=clean_ent, location_description=resp)
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
@@ -988,26 +1369,31 @@ class VisionEngine:
             is_vault_rec = self.vault.record_exists_for_query(key)
             is_sensitive_req = is_vault_rec or is_sensitive_personal_info(key) or any(w in key.lower() for w in ["sensitive", "protected", "vault", "pin", "password", "bank"])
             if is_sensitive_req:
-                is_auth = self.vault.is_operation_authorized() if self.per_request_auth else self.security.is_session_authorized()
-                if self.security.is_configured() and not is_auth:
+                token = self._active_local_memory_token
+                if token is None and not self.per_request_auth and self.security.is_session_authorized():
+                    token = self.local_memory.gate.create_single_use_token()
+                is_auth = ((token is not None and not token.consumed) or self.vault.is_operation_authorized()) if self.per_request_auth else (self.security.is_session_authorized() or self.vault.is_operation_authorized())
+                if (self.local_memory.is_password_configured() or self.security.is_configured()) and not is_auth:
                     challenge_msg = self.security.start_challenge({
                         "intent": "MEMORY_FORGET",
                         "route": route,
                         "transcript": user_transcript,
                         "level": SecurityLevel.PROTECTED
                     })
-                    challenge_msg = "This is protected information. Please say your voice password or sensitive password."
+                    challenge_msg = "This is a protected action and protected information. Please speak your voice password or sensitive password."
                     self.response_manager.add_response(challenge_msg, priority=2, force=True)
                     return challenge_msg
                 if not self.per_request_auth:
                     self.vault.sync_with_security_manager(self.security)
-                success = self.vault.delete_secure_record_by_query(key)
-                if not success:
-                    success = self.memory.forget_sensitive_memory(key)
-                if not success:
-                    success = self.memory.forget_memory(key)
+                ok_lm, _ = self.local_memory.forget_memory(key, auth_token=token)
+                ok_vault = self.vault.delete_secure_record_by_query(key)
+                ok_sens = self.memory.forget_sensitive_memory(key)
+                ok_mem = self.memory.forget_memory(key)
+                success = ok_lm or ok_vault or ok_sens or ok_mem
             else:
-                success = self.memory.forget_memory(key)
+                ok_lm, _ = self.local_memory.forget_memory(key)
+                ok_mem = self.memory.forget_memory(key)
+                success = ok_lm or ok_mem
 
             if success:
                 resp = f"Got it. I have deleted that memory about {key}."
@@ -1283,8 +1669,13 @@ class VisionEngine:
                     "transcript": user_transcript,
                     "level": SecurityLevel.PROTECTED
                 })
-                self.response_manager.add_response(challenge_msg, priority=2, force=True)
-                return challenge_msg
+                reason = find_res.get("response_text", "")
+                if reason:
+                    resp = f"{reason} {challenge_msg}"
+                else:
+                    resp = challenge_msg
+                self.response_manager.add_response(resp, priority=2, force=True)
+                return resp
 
             resp = find_res.get("response_text", f"I don't currently see your {target}.")
             self.context.set_active_object(name=target, location_description=resp)
@@ -1511,6 +1902,14 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        # --- WINDOWS SETTINGS INTENTS ---
+        elif intent == "WINDOWS_SETTINGS" or intent.startswith("WINDOWS_SETTINGS_"):
+            page = route.get("params", {}).get("page") or route.get("target") or "main"
+            ok, spoken_msg, details = self.settings_controller.open_settings_page(page)
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken_msg, priority=2, force=True)
+            return spoken_msg
+
         # --- SYSTEM AUTOMATION INTENTS (SG CUBE 2.5 Feature 9) ---
         elif intent == "AUTOMATION_OPEN_APP":
             app_name = route["params"].get("app_name") or route.get("target") or user_transcript
@@ -1519,6 +1918,8 @@ class VisionEngine:
             if res.status == AutomationResultStatus.REQUIRES_CONFIRMATION:
                 self.context.set_pending_automation(req)
             elif res.status == AutomationResultStatus.SUCCESS:
+                self.last_opened_item = req.display_name or app_name
+                self.last_action_summary = f"opened {req.display_name or app_name}"
                 self.context.set_active_automation(
                     action_type=AutomationActionType.OPEN_APP.value,
                     target=req.target,
@@ -1536,12 +1937,7 @@ class VisionEngine:
             if res.status == AutomationResultStatus.REQUIRES_CONFIRMATION:
                 self.context.set_pending_automation(req)
             elif res.status == AutomationResultStatus.SUCCESS:
-                self.context.set_active_automation(
-                    action_type=AutomationActionType.CLOSE_APP.value,
-                    target=req.target,
-                    display_name=req.display_name,
-                    request_id=req.request_id
-                )
+                self.last_action_summary = f"closed {req.display_name or app_name}"
             resp = res.spoken_response
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
@@ -1553,6 +1949,7 @@ class VisionEngine:
             if res.status == AutomationResultStatus.REQUIRES_CONFIRMATION:
                 self.context.set_pending_automation(req)
             elif res.status == AutomationResultStatus.SUCCESS:
+                self.last_opened_item = url
                 self.context.set_active_automation(
                     action_type=AutomationActionType.OPEN_URL.value,
                     target=req.target,
@@ -1615,6 +2012,11 @@ class VisionEngine:
 
         elif intent == "AUTOMATION_READ_SCREEN":
             app_target = route["params"].get("app") or route.get("target")
+            if app_target in ("screen", "desktop", "current", "all", "everything", "display", "now"):
+                app_target = None
+            if app_target:
+                self.system_control.find_and_focus_window(str(app_target))
+                time.sleep(0.3)
             req = self.automation.create_request(AutomationActionType.READ_SCREEN, app_target or "screen", params={"app": app_target})
             res = self.automation.execute_request(req)
             resp = res.spoken_response
@@ -1653,19 +2055,220 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        # --- NOTES SUBSYSTEM INTENTS ---
+        elif intent == "NOTE_CREATE":
+            note_text = route["params"].get("note") or user_transcript
+            ok, msg = self.memory.save_note(note_text)
+            if ok:
+                self.context.set_active_note(text=note_text)
+            self.response_manager.add_response(msg, priority=2, force=True)
+            return msg
+
+        elif intent == "NOTE_SEARCH":
+            query = route["params"].get("query") or user_transcript
+            results = self.memory.search_notes(query)
+            if results:
+                if len(results) == 1:
+                    resp = f"Here is your note: {results[0]['text']}"
+                else:
+                    bullets = [f"- {n['text']}" for n in results[:4]]
+                    resp = f"Found {len(results)} notes matching '{query}':\n" + "\n".join(bullets)
+                self.context.set_active_note(note_id=results[0]['id'], title=results[0]['title'], text=results[0]['text'])
+            else:
+                resp = f"I couldn't find any note matching '{query}'."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "NOTE_LIST":
+            results = self.memory.list_notes(limit=5)
+            if results:
+                bullets = [f"- {n['text']}" for n in results]
+                resp = f"Here are your recent notes ({len(results)}):\n" + "\n".join(bullets)
+                self.context.set_active_note(note_id=results[0]['id'], title=results[0]['title'], text=results[0]['text'])
+            else:
+                resp = "You don't have any saved notes yet."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- MEDIA & MUSIC PLAYBACK INTENTS ---
+        elif intent == "PLAY_MEDIA":
+            query = route["params"].get("query") or route.get("target") or user_transcript
+            if self.context.contains_pronoun_reference(query):
+                res_target, entity_type, _, _ = self.context.resolve_reference(user_transcript)
+                if res_target and entity_type == "media":
+                    query = res_target
+
+            res = self.computer_use.play_media(query, platform="youtube")
+            if res.success:
+                self.last_opened_item = res.title or query
+                self.context.set_active_media(title=res.title or query, platform="youtube", is_playing=True)
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "MEDIA_PAUSE":
+            res = self.computer_use.pause_media()
+            if self.context.active_media:
+                self.context.active_media.is_playing = False
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "MEDIA_RESUME":
+            res = self.computer_use.resume_media()
+            if self.context.active_media:
+                self.context.active_media.is_playing = True
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "MEDIA_NEXT":
+            res = self.computer_use.next_media()
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "MEDIA_PREVIOUS":
+            res = self.computer_use.previous_media()
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "MEDIA_STOP":
+            res = self.computer_use.stop_media()
+            if self.context.active_media:
+                self.context.active_media.is_playing = False
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- APPROVED FEATURE: YOUTUBE SEARCH, PLAY & CONTROL ---
+        elif intent == "YOUTUBE_SEARCH":
+            query = route.get("params", {}).get("query", "")
+            ok, spoken, details = self.computer_use.search_youtube(query)
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_OPEN":
+            ok, spoken, details = self.computer_use.open_youtube()
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_MUTE":
+            ok, spoken, details = self.computer_use.mute_youtube()
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_UNMUTE":
+            ok, spoken, details = self.computer_use.unmute_youtube()
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_SEEK_FORWARD":
+            secs = route.get("params", {}).get("seconds", 10)
+            ok, spoken, details = self.computer_use.seek_forward(seconds=secs)
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_SEEK_BACKWARD":
+            secs = route.get("params", {}).get("seconds", 10)
+            ok, spoken, details = self.computer_use.seek_backward(seconds=secs)
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "YOUTUBE_CLOSE":
+            ok, spoken, details = self.computer_use.close_youtube()
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        # --- APPROVED FEATURE: SCREENSHOT CAPTURE & SAVE ---
+        elif intent == "SCREENSHOT_CAPTURE_FULL":
+            ctrl = getattr(self, 'screenshot_controller', None) or get_screenshot_controller()
+            res = ctrl.capture_full_screen()
+            self.last_action_summary = res.details
+            self.response_manager.add_response(res.spoken_summary, priority=2, force=True)
+            return res.spoken_summary
+
+        elif intent == "SCREENSHOT_CAPTURE_WINDOW":
+            ctrl = getattr(self, 'screenshot_controller', None) or get_screenshot_controller()
+            res = ctrl.capture_active_window()
+            self.last_action_summary = res.details
+            self.response_manager.add_response(res.spoken_summary, priority=2, force=True)
+            return res.spoken_summary
+
+        # --- MULTI-STEP NATURAL ASSISTANT INTENTS ---
+        elif intent == "MULTI_STEP_ACTION":
+            goal = route["params"].get("goal") or user_transcript
+            res = self.computer_use.execute_multi_step_goal(
+                goal,
+                memory_manager=self.memory,
+                task_manager=self.tasks,
+                automation_manager=self.automation
+            )
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- COMPUTER-USE & WEB SEARCH INTENTS (Phase 2 Integration) ---
+        elif intent == "WEB_SEARCH":
+            query = route["params"].get("query") or route.get("target") or user_transcript
+            try:
+                import webbrowser
+                import urllib.parse
+                encoded_q = urllib.parse.quote_plus(query)
+                webbrowser.open(f"https://www.google.com/search?q={encoded_q}", new=2)
+                self.last_opened_item = f"Google search for '{query}'"
+            except Exception:
+                pass
+            results = self.computer_use.web_tools.search_web(query, max_results=3)
+            if results:
+                self.artifact_cache.store_artifacts("web_search", results, query=query)
+                self.last_action_summary = f"searched the web for '{query}'"
+            summary = self.computer_use.web_tools.format_search_summary(results)
+            resp = f"Here is what I found on the web:\n\n{summary}" if summary else f"I opened Google search for '{query}'."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "COMPUTER_USE_ACTION":
+            goal = route["params"].get("goal") or user_transcript
+            res = self.computer_use.execute_goal(goal, confirmed=False)
+            if res.requires_confirmation:
+                self.context.set_pending_automation(res.pending_action)
+            resp = res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "COMPUTER_ACTION_CANCEL":
+            self.computer_use.cancel()
+            resp = "Computer-use action cancelled."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "AUTOMATION_CONFIRM":
             pending_req = route["params"].get("pending_request") or self.context.get_pending_automation()
             if pending_req:
                 self.context.clear_pending_automation()
-                res = self.automation.execute_request(pending_req, confirmed=True)
-                if res.status == AutomationResultStatus.SUCCESS:
-                    self.context.set_active_automation(
-                        action_type=pending_req.action_type.value if hasattr(pending_req.action_type, "value") else str(pending_req.action_type),
-                        target=pending_req.target,
-                        display_name=pending_req.display_name,
-                        request_id=pending_req.request_id
-                    )
-                resp = res.spoken_response
+                if isinstance(pending_req, dict) and "goal" in pending_req:
+                    # Confirmed computer-use action
+                    res = self.computer_use.execute_goal(pending_req["goal"], confirmed=True)
+                    resp = res.spoken_summary
+                else:
+                    res = self.automation.execute_request(pending_req, confirmed=True)
+                    if res.status == AutomationResultStatus.SUCCESS:
+                        self.context.set_active_automation(
+                            action_type=pending_req.action_type.value if hasattr(pending_req.action_type, "value") else str(pending_req.action_type),
+                            target=pending_req.target,
+                            display_name=pending_req.display_name,
+                            request_id=pending_req.request_id
+                        )
+                    resp = res.spoken_response
             else:
                 resp = "There is no pending automation action to confirm."
             self.response_manager.add_response(resp, priority=2, force=True)
@@ -1673,6 +2276,8 @@ class VisionEngine:
 
         elif intent == "AUTOMATION_CANCEL":
             self.context.clear_pending_automation()
+            if hasattr(self, 'computer_use'):
+                self.computer_use.cancel()
             resp = "Message cancelled." if (route.get("params") and "pending_request" in route["params"] and getattr(route["params"]["pending_request"], "action_type", None) == AutomationActionType.SEND_MESSAGE) else "Action cancelled."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
@@ -1728,15 +2333,497 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        # --- AUDIO OUTPUT & DEVICE MANAGEMENT INTENTS ---
+        elif intent == "AUDIO_DEVICE_GET":
+            try:
+                from assistive.audio_output_manager import get_audio_output_manager
+                aom = get_audio_output_manager()
+                info = aom.get_current_output_info()
+                dev_name = info.get("name", "Unknown device")
+                dev_type = info.get("device_type", "Standard Audio").replace("_", " ").title()
+                vol = aom.get_volume()
+                muted_str = " (muted)" if aom.is_muted() else ""
+                resp = f"Current audio output is {dev_name} ({dev_type}) at {vol} percent volume{muted_str}."
+            except Exception as e:
+                resp = f"Unable to determine current audio output: {e}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "AUDIO_DEVICE_LIST":
+            try:
+                from assistive.audio_output_manager import get_audio_output_manager
+                aom = get_audio_output_manager()
+                devs = aom.enumerate_render_devices()
+                if devs:
+                    names = [f"{d['name']} ({d['device_type'].replace('_', ' ').title()})" for d in devs if d.get("state", "").upper() == "ACTIVE"]
+                    if not names:
+                        names = [f"{d['name']} ({d['device_type'].replace('_', ' ').title()})" for d in devs]
+                    resp = f"Found {len(names)} playback devices: " + ", ".join(names) + "."
+                else:
+                    resp = "No active audio playback devices found."
+            except Exception as e:
+                resp = f"Unable to enumerate audio devices: {e}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "AUDIO_DEVICE_SWITCH":
+            target_str = route["params"].get("device", "").lower()
+            try:
+                from assistive.audio_output_manager import get_audio_output_manager
+                aom = get_audio_output_manager()
+                devs = aom.enumerate_render_devices()
+                matched_id = None
+                matched_name = None
+                for d in devs:
+                    d_name_lower = d["name"].lower()
+                    d_type_lower = d["device_type"].lower()
+                    if target_str in d_name_lower or target_str in d_type_lower or (target_str in ["bluetooth", "headphone", "headset"] and "bluetooth" in d_type_lower) or (target_str in ["projector", "hdmi", "tv"] and "hdmi" in d_type_lower) or (target_str in ["speaker", "laptop"] and "laptop" in d_type_lower):
+                        matched_id = d["id"]
+                        matched_name = d["name"]
+                        break
+                if matched_id:
+                    from pycaw.pycaw import AudioUtilities
+                    AudioUtilities.SetDefaultDevice(matched_id)
+                    aom.rebind(force=True, reason=f"Voice switch to {matched_name}")
+                    resp = f"Switched audio output to {matched_name}."
+                    self.last_action_summary = f"switched audio output to {matched_name}"
+                else:
+                    resp = f"Could not find an audio device matching '{target_str}'."
+            except Exception as e:
+                resp = f"Failed to switch audio output: {e}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "AUDIO_DIAGNOSTICS":
+            try:
+                from assistive.audio_output_manager import get_audio_output_manager
+                aom = get_audio_output_manager()
+                diag = aom.run_audio_diagnostics()
+                status = diag.get("status", "HEALTHY")
+                cur_dev = diag.get("active_device", "Default Speaker")
+                cur_type = diag.get("active_type", "Standard Audio").replace("_", " ").title()
+                dev_count = diag.get("available_devices_count", 1)
+                resp = f"Audio diagnostics complete. Status is {status}. Active device is {cur_dev} ({cur_type}) with {dev_count} available outputs. PortAudio and text to speech are healthy."
+            except Exception as e:
+                resp = f"Audio diagnostics error: {e}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- SYSTEM OPERATIONS & WINDOWS CONTROLS ---
+        elif intent == "SYSTEM_VOLUME":
+            action = route["params"].get("action", "get")
+            val = route["params"].get("value")
+            if action == "set" and val is not None:
+                ok, level, msg = self.system_control.set_volume(val)
+                resp = f"Master volume set to {level} percent." if ok else f"I couldn't set the volume. {msg}"
+                if ok:
+                    self.last_action_summary = f"set volume to {level} percent"
+            elif action == "up":
+                step = route["params"].get("step", 10)
+                ok, level, msg = self.system_control.volume_up(step)
+                resp = f"Master volume increased to {level} percent." if ok else f"I couldn't increase the volume. {msg}"
+                if ok:
+                    self.last_action_summary = f"increased volume to {level} percent"
+            elif action == "down":
+                step = route["params"].get("step", 10)
+                ok, level, msg = self.system_control.volume_down(step)
+                resp = f"Master volume decreased to {level} percent." if ok else f"I couldn't decrease the volume. {msg}"
+                if ok:
+                    self.last_action_summary = f"decreased volume to {level} percent"
+            elif action == "mute":
+                ok, msg = self.system_control.mute()
+                resp = "Audio muted." if ok else f"I couldn't mute the audio. {msg}"
+                if ok:
+                    self.last_action_summary = "muted audio"
+            elif action == "unmute":
+                ok, msg = self.system_control.unmute()
+                resp = "Audio unmuted." if ok else f"I couldn't unmute the audio. {msg}"
+                if ok:
+                    self.last_action_summary = "unmuted audio"
+            else:
+                curr = self.system_control.get_volume()
+                muted = " and currently muted" if self.system_control.is_muted() else ""
+                resp = f"Master volume is at {curr} percent{muted}."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_BRIGHTNESS":
+            action = route["params"].get("action", "get")
+            val = route["params"].get("value")
+            if action == "set" and val is not None:
+                ok, level, msg = self.system_control.set_brightness(val)
+                resp = msg
+            elif action == "up":
+                step = route["params"].get("step", 10)
+                ok, level, msg = self.system_control.brightness_up(step)
+                resp = msg
+            elif action == "down":
+                step = route["params"].get("step", 10)
+                ok, level, msg = self.system_control.brightness_down(step)
+                resp = msg
+            else:
+                b = self.system_control.get_brightness()
+                if b is not None:
+                    resp = f"Current display brightness is {b} percent."
+                else:
+                    resp = "Display brightness control is not supported by your hardware."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_WIFI":
+            action = route["params"].get("action", "status")
+            if action == "on":
+                ok, is_on, msg = self.system_control.set_wifi_enabled(True)
+                resp = msg
+            elif action == "off":
+                ok, is_on, msg = self.system_control.set_wifi_enabled(False)
+                resp = msg
+            else:
+                ok, is_on, msg = self.system_control.get_wifi_status()
+                resp = msg
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_BLUETOOTH":
+            action = route["params"].get("action", "status")
+            if action == "on":
+                ok, is_on, msg = self.system_control.set_bluetooth_enabled(True)
+                resp = msg
+            elif action == "off":
+                ok, is_on, msg = self.system_control.set_bluetooth_enabled(False)
+                resp = msg
+            elif action == "list":
+                ok, devs, msg = self.system_control.list_bluetooth_devices()
+                resp = msg
+            elif action == "connect":
+                target_dev = route["params"].get("device", "")
+                ok, dev_name, msg = self.system_control.connect_bluetooth_device(target_dev)
+                resp = msg
+            elif action == "disconnect":
+                target_dev = route["params"].get("device", "")
+                ok, dev_name, msg = self.system_control.disconnect_bluetooth_device(target_dev)
+                resp = msg
+            else:
+                ok, is_on, msg = self.system_control.get_bluetooth_status()
+                resp = msg
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_WINDOW_CONTROL":
+            action = route["params"].get("action", "minimize")
+            app_name = route["params"].get("app", "") or route.get("target", "")
+            from .window_controller import get_window_controller
+            wc = get_window_controller()
+            if action in ("minimize", "minimize_app"):
+                res = wc.minimize_named_window(app_name)
+                resp = res.spoken_summary
+            elif action in ("maximize", "maximize_app"):
+                res = wc.maximize_named_window(app_name)
+                resp = res.spoken_summary
+            elif action in ("close", "close_app"):
+                res = wc.close_named_window(app_name)
+                resp = res.spoken_summary
+            elif action in ("restore", "restore_app"):
+                res = wc.execute_window_action("restore", app_name)
+                resp = res.spoken_summary
+            elif action == "switch":
+                ok = self.system_control.switch_window()
+                resp = "Switched to next window." if ok else "Unable to switch window."
+            elif action == "switch_app":
+                ok = self.system_control.find_and_focus_window(app_name)
+                if not ok:
+                    ok = self.system_control.switch_window()
+                resp = f"Switched to {app_name}." if ok else f"Could not find or switch to {app_name}."
+            else:
+                title = self.system_control.get_active_window_title()
+                resp = f"The active window is {title}." if title else "No active window detected."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_CLIPBOARD":
+            action = route["params"].get("action", "read")
+            if action == "read":
+                clip = self.system_control.get_clipboard_text()
+                resp = f"Clipboard contents: {clip}" if clip else "The clipboard is empty."
+            elif action == "write":
+                text_to_copy = route["params"].get("text", "")
+                ok = self.system_control.copy_text_to_clipboard(text_to_copy)
+                resp = f"Copied to clipboard: {text_to_copy}" if ok else "Failed to copy to clipboard."
+            elif action == "select_all":
+                try:
+                    import pyautogui
+                    pyautogui.hotkey('ctrl', 'a')
+                except Exception:
+                    pass
+                resp = "Selected all."
+            elif action == "copy":
+                try:
+                    import pyautogui
+                    pyautogui.hotkey('ctrl', 'c')
+                except Exception:
+                    pass
+                resp = "Copied to clipboard."
+            elif action == "paste":
+                try:
+                    import pyautogui
+                    pyautogui.hotkey('ctrl', 'v')
+                except Exception:
+                    pass
+                resp = "Pasted from clipboard."
+            else:
+                resp = "Clipboard action completed."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "OPEN_SEARCH_RESULT_ORDINAL":
+            ordinal_str = route["params"].get("ordinal_str") or user_transcript
+            item = self.artifact_cache.resolve_ordinal_reference(ordinal_str)
+            if item and item.url:
+                req = self.automation.create_request(AutomationActionType.OPEN_URL, item.url)
+                res = self.automation.execute_request(req)
+                self.last_opened_item = item.title or item.url
+                resp = f"Opening {item.title}."
+            elif item:
+                self.last_opened_item = item.title
+                resp = f"Result {item.index} is {item.title}: {item.content}"
+            else:
+                resp = "I couldn't find that search result."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "BROWSER_NAVIGATE":
+            direction = route["params"].get("direction", "back")
+            try:
+                import pyautogui
+                if direction == "back":
+                    pyautogui.hotkey('alt', 'left')
+                    resp = "Navigating back."
+                elif direction == "forward":
+                    pyautogui.hotkey('alt', 'right')
+                    resp = "Navigating forward."
+                elif direction == "scroll_down":
+                    pyautogui.scroll(-500)
+                    resp = "Scrolled down."
+                elif direction == "scroll_up":
+                    pyautogui.scroll(500)
+                    resp = "Scrolled up."
+                else:
+                    resp = "Navigation command completed."
+            except Exception as e:
+                resp = f"Navigation action error: {e}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "BROWSER_READ_PAGE":
+            req = self.automation.create_request(AutomationActionType.READ_SCREEN, "browser", params={"app": "browser"})
+            res = self.automation.execute_request(req)
+            resp = res.spoken_response
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "WAKE_ACKNOWLEDGMENT":
+            resp = "I'm listening."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "LAST_ACTION_QUERY":
+            if getattr(self, 'last_opened_item', None):
+                resp = f"The last item opened was {self.last_opened_item}."
+            elif getattr(self, 'last_action_summary', None):
+                resp = f"The last action performed was {self.last_action_summary}."
+            else:
+                resp = "No items or websites have been opened recently."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "HEALTH_DIAGNOSTICS":
+            diag = self.health_diagnostics.run_full_diagnostics()
+            resp = f"System diagnostic check: {diag['spoken_summary']}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_CALCULATE":
+            expr = route["params"].get("expression", "")
+            try:
+                clean_expr = expr.lower()
+                clean_expr = clean_expr.replace("raised to the power of", "**").replace("raised to", "**").replace("to the power of", "**").replace("power of", "**")
+                clean_expr = clean_expr.replace("times", "*").replace("multiplied by", "*").replace("x", "*")
+                clean_expr = clean_expr.replace("divided by", "/").replace("plus", "+").replace("minus", "-")
+                clean_expr = re.sub(r'[^0-9+\-*/().]', '', clean_expr)
+                if clean_expr:
+                    result = eval(clean_expr, {"__builtins__": None}, {})
+                    if isinstance(result, float) and result.is_integer():
+                        result = int(result)
+                    elif isinstance(result, float):
+                        result = round(result, 4)
+                    resp = f"The result is {result}."
+                else:
+                    resp = "I couldn't calculate that expression."
+            except ZeroDivisionError:
+                resp = "Division by zero is undefined."
+            except Exception:
+                resp = "Calculation failed."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- LOCAL FAST-PATH CLOCK INTENTS (SG CUBE Fix 3) ---
+        elif intent == "SYSTEM_TIME":
+            now = datetime.datetime.now()
+            time_str = now.strftime("%I:%M %p").lstrip("0")
+            resp = f"The current time is {time_str}."
+            print(f"[FAST_PATH: time] Local system time resolved: {resp}")
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_DATE":
+            now = datetime.datetime.now()
+            date_str = f"{now.strftime('%B')} {now.day}, {now.year}"
+            resp = f"Today's date is {date_str}."
+            print(f"[FAST_PATH: date] Local system date resolved: {resp}")
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        elif intent == "SYSTEM_DAY":
+            now = datetime.datetime.now()
+            day_str = now.strftime("%A")
+            resp = f"Today is {day_str}."
+            print(f"[FAST_PATH: day] Local system day resolved: {resp}")
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- VOICE MOUSE CONTROL INTENTS ---
+        elif intent.startswith("MOUSE_"):
+            res = self.mouse_controller.execute_action(intent, route.get("params", {}))
+            resp = res.spoken_response
+            self.last_action_summary = f"mouse action {intent.lower()}"
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
+        # --- WINDOWS SETTINGS INTENTS ---
+        elif intent == "WINDOWS_SETTINGS" or intent.startswith("WINDOWS_SETTINGS_"):
+            page = route.get("params", {}).get("page") or route.get("target") or "main"
+            ok, spoken_msg, details = self.settings_controller.open_settings_page(page)
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken_msg, priority=2, force=True)
+            return spoken_msg
+
+        # --- NOTEPAD & TEXT ENTRY / CLIPBOARD INTENTS ---
+        elif intent == "NOTEPAD_WRITE":
+            text_val = route.get("params", {}).get("text", "")
+            print(f"[DIAGNOSTIC:STAGE_6] NOTEPAD_WRITE_CALLED: YES, text='{text_val}'")
+            try:
+                ok, spoken, details = self.notepad_controller.write_text(text_val)
+                print(f"[DIAGNOSTIC:STAGE_7] WRITE_TEXT_RESULT: success={ok}, spoken='{spoken}', details='{details}'")
+                if not ok:
+                    print(f"[DIAGNOSTIC:STAGE_10] FAILURE_CONDITION in NOTEPAD_WRITE: {details}")
+            except Exception as e:
+                print(f"[DIAGNOSTIC:STAGE_10] EXCEPTION in NOTEPAD_WRITE: {e}")
+                raise
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "NOTEPAD_SELECT_ALL":
+            print(f"[DIAGNOSTIC:STAGE_6] NOTEPAD_SELECT_ALL_CALLED: YES")
+            try:
+                ok, spoken, details = self.notepad_controller.select_all()
+                print(f"[DIAGNOSTIC:STAGE_7] SELECT_ALL_RESULT: success={ok}, spoken='{spoken}', details='{details}'")
+                if not ok:
+                    print(f"[DIAGNOSTIC:STAGE_10] FAILURE_CONDITION in NOTEPAD_SELECT_ALL: {details}")
+            except Exception as e:
+                print(f"[DIAGNOSTIC:STAGE_10] EXCEPTION in NOTEPAD_SELECT_ALL: {e}")
+                raise
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "NOTEPAD_COPY":
+            select_first = route.get("params", {}).get("select_all_first", False)
+            print(f"[DIAGNOSTIC:STAGE_8] NOTEPAD_COPY_CALLED: YES, select_all_first={select_first}")
+            try:
+                ok, spoken, details = self.notepad_controller.copy(select_all_first=select_first)
+                print(f"[DIAGNOSTIC:STAGE_8] NOTEPAD_COPY_RESULT: success={ok}, spoken='{spoken}', details='{details}'")
+                if not ok:
+                    print(f"[DIAGNOSTIC:STAGE_10] FAILURE_CONDITION in NOTEPAD_COPY: {details}")
+            except Exception as e:
+                print(f"[DIAGNOSTIC:STAGE_10] EXCEPTION in NOTEPAD_COPY: {e}")
+                raise
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "NOTEPAD_PASTE":
+            print(f"[DIAGNOSTIC:STAGE_9] NOTEPAD_PASTE_CALLED: YES")
+            try:
+                ok, spoken, details = self.notepad_controller.paste()
+                print(f"[DIAGNOSTIC:STAGE_9] NOTEPAD_PASTE_RESULT: success={ok}, spoken='{spoken}', details='{details}'")
+                if not ok:
+                    print(f"[DIAGNOSTIC:STAGE_10] FAILURE_CONDITION in NOTEPAD_PASTE: {details}")
+            except Exception as e:
+                print(f"[DIAGNOSTIC:STAGE_10] EXCEPTION in NOTEPAD_PASTE: {e}")
+                raise
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "NOTEPAD_CLEAR":
+            ok, spoken, details = self.notepad_controller.clear_document()
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "NOTEPAD_OPEN" or (intent in ("AUTOMATION_OPEN_APP", "APP_CONTROL") and (route.get("target") == "notepad" or route.get("params", {}).get("app_name") == "notepad")):
+            print(f"[DIAGNOSTIC:STAGE_6] NOTEPAD_OPEN_CALLED: YES")
+            try:
+                ok, spoken, details = self.notepad_controller.open_notepad()
+                print(f"[DIAGNOSTIC:STAGE_7] OPEN_NOTEPAD_RESULT: success={ok}, spoken='{spoken}', details='{details}'")
+                if not ok:
+                    print(f"[DIAGNOSTIC:STAGE_10] FAILURE_CONDITION in OPEN_NOTEPAD: {details}")
+            except Exception as e:
+                print(f"[DIAGNOSTIC:STAGE_10] EXCEPTION in OPEN_NOTEPAD: {e}")
+                raise
+            self.last_action_summary = details
+            self.response_manager.add_response(spoken, priority=2, force=True)
+            return spoken
+
+        elif intent == "COMPOUND_TASK":
+            steps = self.task_planner.decompose_task(user_transcript)
+            if not steps:
+                resp = "I could not break down that compound command."
+            else:
+                def step_exec(cmd_str: str) -> Tuple[bool, str]:
+                    r = self.router.route_command(cmd_str)
+                    int_name = r.get("intent", "GENERAL")
+                    if int_name == "COMPOUND_TASK":
+                        int_name = "GENERAL"
+                    out = self._execute_intent(int_name, r, cmd_str)
+                    return True, out or "Done."
+
+                exec_res = self.task_planner.execute_plan(steps, step_exec)
+                resp = exec_res.spoken_summary
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "INTRODUCE":
             resp = OFFICIAL_INTRODUCTION
             self.response_manager.add_response(resp, priority=1, force=True)
             return resp
 
         elif intent == "SLEEP":
+            self.context.state = ConversationState.IDLE
             resp = "Going to sleep mode. Say Hey SG CUBE whenever you need me."
             self.response_manager.add_response(resp, priority=1, force=True)
             return resp
+
+        elif intent == "GENERAL":
+            clean_q = user_transcript.lower()
+            if any(w in clean_q for w in ["what do you see", "what is in front of me", "what's in front of me", "describe the scene", "describe what you see"]):
+                if self.last_scene:
+                    resp = self.scene.answer_query(user_transcript, scene=self.last_scene)
+                    if resp and "I don't have a visual scene available" not in resp:
+                        self.response_manager.add_response(resp, priority=2, force=True)
+                        return resp
+            return None
 
         # General queries fall through to Gemini Live for multimodal reasoning
         return None

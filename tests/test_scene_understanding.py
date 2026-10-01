@@ -234,7 +234,7 @@ class TestSceneUnderstanding(unittest.TestCase):
             person_id="p1",
             bbox=(260, 80, 120, 160),
             is_known=True,
-            name="Sharath",
+            name="Alex",
             state="KNOWN",
             is_confirmed=True,
             liveness_ok=True,
@@ -408,7 +408,7 @@ class TestSceneUnderstanding(unittest.TestCase):
     def test_21_face_integration_known(self):
         faces = [{
             "bbox": (250, 100, 120, 150),
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": True,
@@ -418,14 +418,14 @@ class TestSceneUnderstanding(unittest.TestCase):
         dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
         scene = self.scene_analyzer.build_scene(dummy_frame, face_results=faces)
         self.assertEqual(scene.people_count, 1)
-        self.assertEqual(scene.people[0].display_name, "Sharath")
-        self.assertIn("Sharath", scene.summary)
+        self.assertEqual(scene.people[0].display_name, "Alex")
+        self.assertIn("Alex", scene.summary)
 
     # 22. Face privacy safeguard for unknown / unconfirmed identity
     def test_22_face_privacy_safeguard_unknown(self):
         faces = [{
             "bbox": (250, 100, 120, 150),
-            "name": "Sharath",
+            "name": "Alex",
             "state": "UNKNOWN",  # Unconfirmed
             "is_confirmed": False,
             "liveness_ok": True,
@@ -436,14 +436,14 @@ class TestSceneUnderstanding(unittest.TestCase):
         scene = self.scene_analyzer.build_scene(dummy_frame, face_results=faces)
         self.assertEqual(scene.people_count, 1)
         self.assertEqual(scene.people[0].display_name, "a person")
-        self.assertNotIn("Sharath", scene.summary)
+        self.assertNotIn("Alex", scene.summary)
         self.assertIn("person", scene.summary.lower())
 
     # 23. Face privacy safeguard for spoof or poor quality
     def test_23_face_privacy_safeguard_spoof(self):
         faces = [{
             "bbox": (250, 100, 120, 150),
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": False,  # Failed anti-spoof
@@ -565,7 +565,7 @@ class TestSceneUnderstanding(unittest.TestCase):
         ]
         faces = [{
             "bbox": (250, 100, 120, 150),
-            "name": "Sharath",
+            "name": "Alex",
             "state": "KNOWN",
             "is_confirmed": True,
             "liveness_ok": True,

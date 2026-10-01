@@ -29,6 +29,10 @@ class TestSensitiveMemoryStorage(unittest.TestCase):
         self.history = ConversationHistory(db_dir=self.hist_dir)
 
     def tearDown(self):
+        if hasattr(self, "memory"):
+            self.memory.close()
+        if hasattr(self, "history"):
+            self.history.close()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     # -------------------------------------------------------------------------
@@ -154,6 +158,7 @@ class TestSensitiveMemoryStorage(unittest.TestCase):
     # 6. End-to-End VisionEngine Authorization Flow
     # -------------------------------------------------------------------------
     def test_06_vision_engine_sensitive_memory_voice_gating(self):
+        self.memory.close()
         engine = VisionEngine(data_dir=self.test_dir)
         engine.security.set_password("blue ocean breeze")
         engine.security.lock_session()

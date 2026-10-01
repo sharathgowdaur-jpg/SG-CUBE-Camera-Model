@@ -163,17 +163,22 @@ class VaultAuthenticator:
             return False, None
 
         clean_passphrase = passphrase.strip()
-        candidate_key = self._derive_key(clean_passphrase, salt)
-        candidate_hash = self._compute_verifier_hash(candidate_key, salt)
+        from ..security_manager import get_candidate_forms
+        candidates = get_candidate_forms(clean_passphrase)
+        if clean_passphrase not in candidates:
+            candidates.insert(0, clean_passphrase)
 
-        if hmac.compare_digest(expected_hash, candidate_hash):
-            self._active_key = candidate_key
-            self._is_authenticated = True
-            self._reset_failed_attempts()
-            return True, candidate_key
-        else:
-            self._register_failed_attempt()
-            return False, None
+        for cand in candidates:
+            candidate_key = self._derive_key(cand, salt)
+            candidate_hash = self._compute_verifier_hash(candidate_key, salt)
+            if hmac.compare_digest(expected_hash, candidate_hash):
+                self._active_key = candidate_key
+                self._is_authenticated = True
+                self._reset_failed_attempts()
+                return True, candidate_key
+
+        self._register_failed_attempt()
+        return False, None
 
     def get_active_key(self) -> Optional[bytes]:
         """ Returns the currently active 256-bit symmetric encryption key if authenticated """

@@ -72,17 +72,17 @@ class TestHighAccuracyFaceRecognition:
         mem = FaceMemory(storage_dir=TEST_DATA_DIR, high_match_threshold=0.65)
         face_img = create_synthetic_face_image(seed=101, brightness=130, contrast=45)
 
-        # Enroll Sharath
-        pid = mem.save_person("Sharath", face_img)
+        # Enroll Alex
+        pid = mem.save_person("Alex", face_img)
         assert pid is not None
-        assert "Sharath" in mem.list_people()
+        assert "Alex" in mem.list_people()
 
         # Query with same person
         query_emb = mem.compute_face_embedding(face_img)
         match = mem.match_face_embedding(query_emb, threshold=0.65)
 
         assert match["state"] == "KNOWN"
-        assert match["name"] == "Sharath"
+        assert match["name"] == "Alex"
         assert match["confidence"] >= 0.65
 
         # Verify VisionEngine output
@@ -90,19 +90,19 @@ class TestHighAccuracyFaceRecognition:
         engine.face_memory = mem
         engine.last_faces = [{
             "bbox": (100, 100, 120, 120),
-            "name": "Sharath",
+            "name": "Alex",
             "match_state": "KNOWN",
             "confidence": 0.88,
             "is_confirmed": True
         }]
         resp = engine.process_user_speech_query("Who is in front of me?")
-        assert resp == "Hello Sharath."
+        assert resp == "Hello Alex."
 
     def test_02_unknown_user_rejection(self):
         """ Scenario 2: Unknown user -> 'Sorry, I can't recognize you.' """
         mem = FaceMemory(storage_dir=TEST_DATA_DIR, high_match_threshold=0.65)
         enrolled_face = create_synthetic_face_image(seed=201, brightness=130, contrast=45)
-        mem.save_person("Sharath", enrolled_face)
+        mem.save_person("Alex", enrolled_face)
 
         # Query with an unknown, non-matching embedding (dot product < low_threshold)
         unknown_emb = np.random.randn(mem.embedding_dimension).astype(np.float32)
@@ -376,7 +376,7 @@ class TestHighAccuracyFaceRecognition:
 
         for i in range(3):
             dets = [
-                {"bbox": bbox_a, "state": "KNOWN", "name": "Sharath", "confidence": 0.89, "quality_ok": True},
+                {"bbox": bbox_a, "state": "KNOWN", "name": "Alex", "confidence": 0.89, "quality_ok": True},
                 {"bbox": bbox_b, "state": "UNKNOWN", "name": None, "confidence": 0.30, "quality_ok": True}
             ]
             res = tracker.update(dets, timestamp=t0 + i * 0.1)
@@ -385,10 +385,10 @@ class TestHighAccuracyFaceRecognition:
         # Verify track A
         track_a = next(r for r in res if r["bbox"] == bbox_a)
         assert track_a["match_state"] == "KNOWN"
-        assert track_a["name"] == "Sharath"
+        assert track_a["name"] == "Alex"
         assert track_a["is_confirmed"]
         assert track_a["should_greet"]
-        assert track_a["greeting_text"] == "Hello Sharath."
+        assert track_a["greeting_text"] == "Hello Alex."
 
         # Verify track B
         track_b = next(r for r in res if r["bbox"] == bbox_b)
@@ -411,11 +411,11 @@ class TestHighAccuracyFaceRecognition:
         samples.append(create_synthetic_face_image(seed=9999, blur=30))
         samples.append(np.zeros((112, 112, 3), dtype=np.uint8))
 
-        res = recognizer.enroll_person_guided(samples, name="Sharath")
+        res = recognizer.enroll_person_guided(samples, name="Alex")
         assert res["success"]
         assert res["accepted_samples"] == 10
         assert res["total_samples"] == 12
-        assert "Sharath" in mem.list_people()
+        assert "Alex" in mem.list_people()
 
         # Check stored centroid embedding
         person_id = res["person_id"]
@@ -439,7 +439,7 @@ class TestHighAccuracyFaceRecognition:
                 "landmarks": static_landmarks,
                 "crop": static_crop,
                 "state": "KNOWN",
-                "name": "Sharath",
+                "name": "Alex",
                 "confidence": 0.95
             }
             res = tracker.update([det], timestamp=float(f * 0.1))
@@ -467,7 +467,7 @@ class TestHighAccuracyFaceRecognition:
                 "landmarks": live_landmarks,
                 "crop": live_crop,
                 "state": "KNOWN",
-                "name": "Sharath",
+                "name": "Alex",
                 "confidence": 0.92
             }
             res = tracker.update([det], timestamp=float(f * 0.1))
@@ -476,5 +476,5 @@ class TestHighAccuracyFaceRecognition:
         out = res[0]
         assert out["liveness_ok"]
         assert out["match_state"] == "KNOWN"
-        assert out["name"] == "Sharath"
+        assert out["name"] == "Alex"
         assert out["is_confirmed"]

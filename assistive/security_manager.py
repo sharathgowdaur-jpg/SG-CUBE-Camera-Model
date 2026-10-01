@@ -29,17 +29,53 @@ class SecurityState(str, Enum):
     REMOVE_AWAIT_CONFIRM = "REMOVE_AWAIT_CONFIRM"
     CHALLENGE_AWAIT_PHRASE = "CHALLENGE_AWAIT_PHRASE"
 
+DIGIT_TO_WORD: Dict[str, str] = {
+    '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine', '10': 'ten'
+}
+WORD_TO_DIGIT: Dict[str, str] = {v: k for k, v in DIGIT_TO_WORD.items()}
+
+def get_candidate_forms(phrase: Optional[str]) -> List[str]:
+    """
+    Generates canonical candidate forms of a spoken security phrase:
+    - Strips optional wake words / assistant address prefixes ('sg cube', 'hey sg cube', etc.)
+    - Form 1: Raw normalized (stripped punctuation, lowercased)
+    - Form 2: Word-to-digit converted (e.g. 'seven' -> '7')
+    - Form 3: Digit-to-word converted (e.g. '7' -> 'seven')
+    Enables speech recognition to match whether numbers are transcribed as words or digits,
+    without any fuzzy matching or security degradation.
+    """
+    if not phrase:
+        return []
+    clean = phrase.strip().lower()
+    # Strip optional wake words / assistant prefixes if spoken
+    clean = re.sub(r'^(?:hey\s+)?(?:sg\s*cube|sgcube|assistant|computer)[,\s:]*', '', clean).strip()
+    clean = re.sub(r'[^\w\s]', '', clean)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    if not clean:
+        return []
+
+    tokens = clean.split()
+    form_raw = " ".join(tokens)
+    form_digits = " ".join(WORD_TO_DIGIT.get(t, t) for t in tokens)
+    form_words = " ".join(DIGIT_TO_WORD.get(t, t) for t in tokens)
+
+    return list(dict.fromkeys([form_raw, form_digits, form_words]))
+
 def normalize_phrase(phrase: Optional[str]) -> str:
     """
     Normalizes a spoken phrase for deterministic comparison:
     - Lowercase
     - Strip leading/trailing whitespace
+    - Strip optional wake-word prefixes
     - Remove punctuation (periods, commas, exclamation points, hyphens, colons, quotes)
     - Collapse multiple spaces into a single space
     """
     if not phrase:
         return ""
     text = phrase.strip().lower()
+    # Strip optional wake words / assistant prefixes if spoken
+    text = re.sub(r'^(?:hey\s+)?(?:sg\s*cube|sgcube|assistant|computer)[,\s:]*', '', text).strip()
     # Strip harmless punctuation
     text = re.sub(r'[^\w\s]', '', text)
     # Collapse multiple whitespaces
@@ -67,6 +103,8 @@ class SecurityManager:
     - High-risk two-factor authentication (Voice Password + Confirmed Live Face)
     - Zero LLM leakage (intercepts passwords locally before LLM processing)
     """
+
+    get_candidate_forms = staticmethod(get_candidate_forms)
 
     POLICY_MAP: Dict[str, SecurityLevel] = {
         # Safe perception, tasks & conversation
@@ -118,6 +156,21 @@ class SecurityManager:
         "ALERTS_SET_MODE": SecurityLevel.SAFE,
         "ALERTS_STATUS": SecurityLevel.SAFE,
         "ALERTS_EXPLAIN_LAST": SecurityLevel.SAFE,
+        "MOUSE_MOVE": SecurityLevel.SAFE,
+        "MOUSE_CLICK": SecurityLevel.SAFE,
+        "MOUSE_DOUBLE_CLICK": SecurityLevel.SAFE,
+        "MOUSE_RIGHT_CLICK": SecurityLevel.SAFE,
+        "MOUSE_SCROLL": SecurityLevel.SAFE,
+        "MOUSE_MOVE_ABSOLUTE": SecurityLevel.SAFE,
+        "MOUSE_DRAG": SecurityLevel.SAFE,
+        "MOUSE_POSITION": SecurityLevel.SAFE,
+        "WINDOWS_SETTINGS": SecurityLevel.SAFE,
+        "NOTEPAD_OPEN": SecurityLevel.SAFE,
+        "NOTEPAD_WRITE": SecurityLevel.SAFE,
+        "NOTEPAD_SELECT_ALL": SecurityLevel.SAFE,
+        "NOTEPAD_COPY": SecurityLevel.SAFE,
+        "NOTEPAD_PASTE": SecurityLevel.SAFE,
+        "NOTEPAD_CLEAR": SecurityLevel.PROTECTED,
 
         # Protected operations (Single deletion, listings, personal memories, task edits, process closing)
         "MEMORY_RECALL": SecurityLevel.PROTECTED,
@@ -153,10 +206,19 @@ class SecurityManager:
         "AUTOMATION_CONFIG_CHANGE": SecurityLevel.HIGH_RISK,
     }
 
-    def __init__(self, pref_dir: Optional[str] = None, store: Optional[Any] = None):
+    def __init__(self, pref_dir: Optional[str] = None, store: Optional[Any] = None, local_memory_service: Optional[Any] = None):
         self.pref_dir = _resolve_pref_dir(pref_dir)
         os.makedirs(self.pref_dir, exist_ok=True)
         self.store = store
+
+        self.local_memory_service = local_memory_service
+        if self.local_memory_service is None:
+            try:
+                base_data = os.path.dirname(self.pref_dir)
+                from .local_memory_v2 import LocalMemoryService
+                self.local_memory_service = LocalMemoryService(base_data)
+            except Exception:
+                self.local_memory_service = None
 
         self.verifier_file = os.path.join(self.pref_dir, "security_verifier.dat")
         self.recovery_file = os.path.join(self.pref_dir, "recovery_verifier.dat")
@@ -219,6 +281,10 @@ class SecurityManager:
 
     def is_configured(self) -> bool:
         """ Returns True if a valid Voice Security Password verifier is set """
+        if self.local_memory_service and self.local_memory_service.is_password_configured():
+            return True
+        if hasattr(self, "vault") and self.vault and self.vault.is_setup():
+            return True
         return self._cached_verifier is not None and "hash_hex" in self._cached_verifier
 
     def is_onboarding_completed(self) -> bool:
@@ -263,15 +329,28 @@ class SecurityManager:
         }
 
     def _verify_against_record(self, normalized_text: str, record: Optional[Dict[str, Any]]) -> bool:
-        """ Verifies normalized text against stored salt + PBKDF2 hash using constant-time compare """
+        """
+        Verifies candidate text against stored salt + PBKDF2 hash using constant-time compare.
+        Evaluates canonical equivalents (digits and number-words, wake-word stripped)
+        to robustly accept speech recognition variations without fuzzy matching.
+        """
         if not record or not normalized_text:
             return False
         try:
             salt = bytes.fromhex(record["salt_hex"])
             stored_hash = bytes.fromhex(record["hash_hex"])
             iterations = int(record.get("iterations", 100000))
-            computed_hash = hashlib.pbkdf2_hmac("sha256", normalized_text.encode("utf-8"), salt, iterations)
-            return hmac.compare_digest(stored_hash, computed_hash)
+
+            candidates = [normalized_text] + [c for c in get_candidate_forms(normalized_text) if c != normalized_text]
+            if normalized_text.upper() not in candidates:
+                candidates.append(normalized_text.upper())
+            if normalized_text.lower() not in candidates:
+                candidates.append(normalized_text.lower())
+            for cand in candidates:
+                computed_hash = hashlib.pbkdf2_hmac("sha256", cand.encode("utf-8"), salt, iterations)
+                if hmac.compare_digest(stored_hash, computed_hash):
+                    return True
+            return False
         except Exception:
             return False
 
@@ -280,6 +359,10 @@ class SecurityManager:
     # -------------------------------------------------------------------------
     def is_locked_out(self) -> Tuple[bool, int]:
         """ Returns (is_locked, remaining_seconds) """
+        if self.local_memory_service:
+            is_l, rem = self.local_memory_service.is_locked_out()
+            if is_l:
+                return True, int(rem) + 1
         now = time.time()
         if now < self._locked_until:
             rem = int(self._locked_until - now) + 1
@@ -335,6 +418,13 @@ class SecurityManager:
 
         return msg, lockout
 
+    def reset_lockout_for_tests(self):
+        """ Strictly for testing: clears attempt counters and lockout timers """
+        self._failed_attempts = 0
+        self._locked_until = 0.0
+        if self.local_memory_service:
+            self.local_memory_service.lockout.reset_for_tests()
+
     # -------------------------------------------------------------------------
     # Direct Password Verification
     # -------------------------------------------------------------------------
@@ -350,14 +440,30 @@ class SecurityManager:
         if not self.is_configured():
             return True, "Security password is not configured."
 
+        if self.local_memory_service and self.local_memory_service.is_password_configured():
+            ok, msg, token = self.local_memory_service.authenticate_voice_transcript(phrase)
+            if ok:
+                self.authorize_session(self._session_ttl_seconds)
+                return True, "Password verified."
+            else:
+                msg_fail, _ = self._record_failure()
+                return False, msg_fail or msg
+
         norm = normalize_phrase(phrase)
         if not norm:
             msg, _ = self._record_failure()
             return False, msg
 
-        ok = self._verify_against_record(norm, self._cached_verifier)
+        ok = self._verify_against_record(norm, self._cached_verifier) if self._cached_verifier else False
+        if not ok and hasattr(self, "vault") and self.vault and self.vault.is_setup():
+            for cand in self.get_candidate_forms(phrase):
+                if self.vault.authenticate(cand):
+                    ok = True
+                    break
         if ok:
             self.authorize_session(self._session_ttl_seconds)
+            if hasattr(self, "vault") and self.vault and self.vault.is_setup():
+                self.vault.sync_with_security_manager(self)
             return True, "Password verified."
         else:
             msg, _ = self._record_failure()
@@ -375,6 +481,12 @@ class SecurityManager:
         if len(norm) < 3 or len(norm.split()) < 2:
             return False, "Password too short. Please choose a private multi-word phrase with at least two words.", None
 
+        if self.local_memory_service:
+            try:
+                self.local_memory_service.setup_password(norm, norm)
+            except Exception:
+                pass
+
         verifier = self._create_verifier(norm)
         # Generate clean 8-character recovery code (e.g. RC-A7F2-9K4B)
         raw_rc_part1 = secrets.token_hex(2).upper()
@@ -391,6 +503,13 @@ class SecurityManager:
             self._cached_recovery = rec_verifier
             self.mark_onboarding_completed(True)
             self.authorize_session(self._session_ttl_seconds)
+            try:
+                from .log_redaction import get_global_redactor
+                get_global_redactor().register_secret(norm)
+                get_global_redactor().register_secret(phrase)
+                get_global_redactor().register_secret(raw_recovery_code)
+            except Exception:
+                pass
             return True, "Sensitive password set successfully.", raw_recovery_code
         else:
             return False, "Failed to save security verifier to secure storage.", None
@@ -410,6 +529,12 @@ class SecurityManager:
         norm_new = normalize_phrase(new_phrase)
         if len(norm_new) < 3 or len(norm_new.split()) < 2:
             return False, "New password too short. Please use at least two words."
+
+        if self.local_memory_service:
+            try:
+                self.local_memory_service.change_password(norm_cur, norm_new, norm_new)
+            except Exception:
+                pass
 
         new_verifier = self._create_verifier(norm_new)
         ok = self._write_verifier_file(self.verifier_file, new_verifier)
@@ -450,6 +575,11 @@ class SecurityManager:
         ok_r = self._write_verifier_file(self.recovery_file, new_r)
 
         if ok_v and ok_r:
+            if self.local_memory_service:
+                try:
+                    self.local_memory_service.setup_password(norm_new, norm_new)
+                except Exception:
+                    pass
             self._cached_verifier = new_v
             self._cached_recovery = new_r
             self.lock_session()
@@ -470,6 +600,11 @@ class SecurityManager:
 
         self._write_verifier_file(self.verifier_file, None)
         self._write_verifier_file(self.recovery_file, None)
+        if self.local_memory_service:
+            try:
+                self.local_memory_service.remove_password()
+            except Exception:
+                pass
         self._cached_verifier = None
         self._cached_recovery = None
         self.lock_session()
@@ -556,31 +691,31 @@ class SecurityManager:
             }
 
         # 1. First-Run / Set Password Flow
-        if self.current_state == SecurityState.ENROLL_AWAIT_PHRASE:
+        elif self.current_state == SecurityState.ENROLL_AWAIT_PHRASE:
             if len(norm) < 3 or len(norm.split()) < 2:
                 return {
                     "handled": True,
-                    "spoken_response": "Password is too short. Please say a private phrase with at least two words.",
+                    "spoken_response": "Password too short. Please say a private phrase with at least two words.",
                     "action": "RETRY"
                 }
             self._temp_phrase_buffer = norm
             self.current_state = SecurityState.ENROLL_AWAIT_REPEAT
             return {
                 "handled": True,
-                "spoken_response": "Please repeat your sensitive password. Repeat your password to confirm.",
+                "spoken_response": "Please repeat your sensitive password to confirm. Repeat your password to confirm.",
                 "action": "AWAIT_REPEAT"
             }
 
         elif self.current_state == SecurityState.ENROLL_AWAIT_REPEAT:
             if norm == self._temp_phrase_buffer:
-                success, msg, rc = self.set_password(norm)
+                ok, msg, rc = self.set_password(norm)
                 self.current_state = SecurityState.IDLE
                 self._temp_phrase_buffer = None
                 return {
                     "handled": True,
-                    "spoken_response": msg,
-                    "recovery_code": rc,
-                    "action": "SET_SUCCESS" if success else "SET_FAILED"
+                    "spoken_response": "Sensitive password set successfully." if ok else "Failed to save password.",
+                    "action": "SET_SUCCESS" if ok else "SET_FAILED",
+                    "recovery_code": rc
                 }
             else:
                 self.current_state = SecurityState.IDLE
@@ -686,7 +821,12 @@ class SecurityManager:
 
         # 4. Challenge Verification for Pending Protected / High-Risk Action
         elif self.current_state == SecurityState.CHALLENGE_AWAIT_PHRASE:
-            ok = self._verify_against_record(norm, self._cached_verifier)
+            ok = self._verify_against_record(norm, self._cached_verifier) if self._cached_verifier else False
+            if not ok and hasattr(self, "vault") and self.vault and self.vault.is_setup():
+                for cand in self.get_candidate_forms(speech_text):
+                    if self.vault.authenticate(cand):
+                        ok = True
+                        break
             if not ok:
                 msg, _ = self._record_failure()
                 self.current_state = SecurityState.IDLE
@@ -699,6 +839,8 @@ class SecurityManager:
 
             # Passed voice passphrase check
             self.authorize_session(self._session_ttl_seconds)
+            if hasattr(self, "vault") and self.vault and self.vault.is_setup():
+                self.vault.sync_with_security_manager(self)
             pending = self._pending_action
             self.current_state = SecurityState.IDLE
             self._pending_action = None
@@ -727,7 +869,7 @@ class SecurityManager:
         self.current_state = SecurityState.CHALLENGE_AWAIT_PHRASE
         self._pending_action = pending_action
         self._pending_action_time = time.time()
-        return "This is a protected action. Please say your sensitive password."
+        return "Please speak your voice password."
 
     def start_enrollment(self) -> str:
         """ Starts interactive voice enrollment """

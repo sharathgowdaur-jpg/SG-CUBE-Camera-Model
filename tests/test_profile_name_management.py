@@ -105,7 +105,7 @@ class TestProfileNameManagement(unittest.TestCase):
             except Exception:
                 pass
 
-    def test_05_face_recognition_does_not_assume_sharath(self):
+    def test_05_face_recognition_does_not_assume_alex(self):
         """ Face greeting logic uses recognized face identity, not Alexth fallback """
         root = tk.Tk()
         root.withdraw()

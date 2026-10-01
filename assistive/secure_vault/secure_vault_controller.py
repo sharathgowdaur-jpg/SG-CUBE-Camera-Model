@@ -146,6 +146,10 @@ class SecureVaultController:
         try:
             ok, derived_key = self.authenticator.setup(master_passphrase)
             if ok and derived_key:
+                try:
+                    self.dpapi_manager.save_vmk(derived_key)
+                except Exception:
+                    pass
                 self.storage.unlock(derived_key)
                 self.lock_manager.unlock()
                 self._state = ControllerState.UNLOCKED
@@ -168,6 +172,11 @@ class SecureVaultController:
         try:
             ok, derived_key = self.authenticator.verify(passphrase)
             if ok and derived_key:
+                if not self.dpapi_manager.has_master_key():
+                    try:
+                        self.dpapi_manager.save_vmk(derived_key)
+                    except Exception:
+                        pass
                 self.storage.unlock(derived_key)
                 self.lock_manager.unlock()
                 self._state = ControllerState.UNLOCKED

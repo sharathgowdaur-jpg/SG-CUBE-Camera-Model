@@ -13,7 +13,7 @@ class TestProtectedResponseRouting(unittest.TestCase):
         self.tmp_dir = tempfile.mkdtemp()
         self.data_dir = os.path.join(self.tmp_dir, "data")
         os.makedirs(self.data_dir, exist_ok=True)
-        self.engine = VisionEngine(data_dir=self.data_dir)
+        self.engine = VisionEngine(data_dir=self.data_dir, per_request_auth=False)
         self.session_id = self.engine.history.create_session("TestRoutingSession")
         
         # Setup voice security password

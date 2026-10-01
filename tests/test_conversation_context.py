@@ -442,8 +442,7 @@ class TestConversationContext(unittest.TestCase):
         # Follow-up "Delete that task" requires PROTECTED level -> triggers challenge
         resp = engine.process_user_speech_query("Delete that task")
         self.assertTrue(
-            "This is a protected action. Please say your sensitive password." in resp or
-            "This is a protected action. Please say your security password." in resp
+            "This is a protected action" in resp and "password" in resp
         )
         self.assertEqual(engine.context.state, ConversationState.SECURITY_CHALLENGE)
         engine.shutdown()

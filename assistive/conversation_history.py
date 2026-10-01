@@ -14,6 +14,12 @@ def is_sensitive_info(text: str) -> bool:
     if not text:
         return False
     lower = text.lower()
+    if "here is your protected information:" in lower:
+        return True
+    if "[protected information disclosed locally]" in lower:
+        return True
+    if "[voice_password_redacted]" in lower or "[protected security input]" in lower:
+        return True
     patterns = [
         r'\b(?:password|passcode|pin|cvv)\b',
         r'\b(?:api[_\s]?key|secret[_\s]?key|access[_\s]?token|auth[_\s]?token)\b',
@@ -25,7 +31,7 @@ def is_sensitive_info(text: str) -> bool:
         r'\b(?:confidential\s*note|private\s*note|financial\s*info|salary|tax\s*id)\b',
         r'\b(?:sensitive\s*(?:info|information|data|note|notes))\b',
         r'RC-[A-Z0-9]{4}-[A-Z0-9]{4}',
-        r'\b(?:atm\s*pin|vault|protected\s*memory|secure\s*memory)\b'
+        r'\b(?:atm\s*pin|door\s*pin|upi\s*pin|pin\s*code|\bpin\b|vault|protected\s*memory|secure\s*memory)\b'
     ]
     if any(re.search(p, lower) for p in patterns):
         return True
@@ -62,6 +68,15 @@ class ConversationHistory:
             conn.row_factory = sqlite3.Row
             self._tls.conn = conn
         return self._tls.conn
+
+    def close(self):
+        """ Closes thread-local SQLite connection """
+        if hasattr(self._tls, "conn") and self._tls.conn is not None:
+            try:
+                self._tls.conn.close()
+            except Exception:
+                pass
+            self._tls.conn = None
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path, timeout=15.0)

@@ -203,13 +203,13 @@ def test_12_track_properties_convenience_accessors():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=100.0)
     t = tracker.tracks[1]
-    assert t.name == "Sharath"
+    assert t.name == "Alex"
     assert t.location_description == "on your left"
     assert t.get_verbal_location() == "on your left"
-    assert t.get_display_label() == "Sharath"
+    assert t.get_display_label() == "Alex"
 
 
 # =============================================================================
@@ -224,14 +224,14 @@ def test_13_identity_gate_confirmed_known():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath",
+        "name": "Alex",
         "confidence": 0.88
     }]
     tracker.update(det, frame_shape=(480, 640), current_time=100.0)
     t = tracker.tracks[1]
     assert t.identity_state == PersonIdentityState.KNOWN_CONFIRMED
-    assert t.identity_name == "Sharath"
-    assert t.get_display_label() == "Sharath"
+    assert t.identity_name == "Alex"
+    assert t.get_display_label() == "Alex"
 
 
 def test_14_identity_gate_unconfirmed_tracklet_stays_unknown():
@@ -243,7 +243,7 @@ def test_14_identity_gate_unconfirmed_tracklet_stays_unknown():
         "is_confirmed": False,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }]
     tracker.update(det, frame_shape=(480, 640), current_time=100.0)
     t = tracker.tracks[1]
@@ -261,7 +261,7 @@ def test_15_identity_gate_liveness_failure_stays_unknown():
         "is_confirmed": True,
         "liveness_ok": False,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }]
     tracker.update(det, frame_shape=(480, 640), current_time=100.0)
     t = tracker.tracks[1]
@@ -278,7 +278,7 @@ def test_16_identity_gate_quality_failure_stays_unknown():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": False,
-        "name": "Sharath"
+        "name": "Alex"
     }]
     tracker.update(det, frame_shape=(480, 640), current_time=100.0)
     t = tracker.tracks[1]
@@ -322,12 +322,12 @@ def test_18_identity_transition_from_unknown_to_confirmed():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=now + 0.1)
     assert tracker.tracks[1].identity_state == PersonIdentityState.KNOWN_CONFIRMED
     assert len(events) == 1
     assert events[0].event_type == "KNOWN_PERSON_APPEARED"
-    assert "Sharath is in front of you" in events[0].spoken_text
+    assert "Alex is in front of you" in events[0].spoken_text
 
 
 # =============================================================================
@@ -350,11 +350,11 @@ def test_20_known_person_appeared_event():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=100.0)
     assert len(events) == 1
     assert events[0].event_type == "KNOWN_PERSON_APPEARED"
-    assert "Sharath has entered the scene" in events[0].spoken_text
+    assert "Alex has entered the scene" in events[0].spoken_text
 
 
 def test_21_event_cooldown_suppression():
@@ -377,14 +377,14 @@ def test_22_known_person_disappeared_event():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=now)
 
     # Frame after timeout
     events = tracker.update([], frame_shape=(480, 640), current_time=now + 2.5)
     assert len(events) == 1
     assert events[0].event_type == "KNOWN_PERSON_DISAPPEARED"
-    assert "Sharath has left the scene" in events[0].spoken_text
+    assert "Alex has left the scene" in events[0].spoken_text
 
 
 def test_23_re_entry_after_cooldown_generates_event():
@@ -404,7 +404,7 @@ def test_23_re_entry_after_cooldown_generates_event():
 def test_24_scene_people_summary_telemetry():
     tracker = MultiPersonTracker()
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (300, 100, 50, 50), "match_state": "UNKNOWN", "is_confirmed": False}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=100.0)
@@ -412,7 +412,7 @@ def test_24_scene_people_summary_telemetry():
     assert summary["total_people"] == 2
     assert summary["known_count"] == 1
     assert summary["unknown_count"] == 1
-    assert summary["known_names"] == ["Sharath"]
+    assert summary["known_names"] == ["Alex"]
 
 
 # =============================================================================
@@ -432,36 +432,36 @@ def test_26_query_people_count_multiple_known_and_unknown():
     tracker = MultiPersonTracker()
     now = 100.0
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (300, 100, 50, 50), "match_state": "UNKNOWN", "is_confirmed": False}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=now)
     ans = tracker.answer_people_query("PEOPLE_COUNT", current_time=now)
-    assert "There are two people nearby: Sharath, and 1 unknown person." in ans
+    assert "There are two people nearby: Alex, and 1 unknown person." in ans
 
 
 def test_27_query_people_description():
     tracker = MultiPersonTracker()
     now = 100.0
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (550, 100, 50, 50), "match_state": "UNKNOWN", "is_confirmed": False}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=now)
     desc = tracker.answer_people_query("PEOPLE_DESCRIPTION", current_time=now)
-    assert "Sharath and one unknown person are here." in desc
+    assert "Alex and one unknown person are here." in desc
 
 
 def test_28_query_known_people():
     tracker = MultiPersonTracker()
     now = 100.0
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (550, 100, 50, 50), "match_state": "UNKNOWN", "is_confirmed": False}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=now)
     res = tracker.answer_people_query("KNOWN_PEOPLE_QUERY", current_time=now)
-    assert "I recognize Sharath, on your left." in res
+    assert "I recognize Alex, on your left." in res
 
 
 def test_29_query_specific_person_location():
@@ -473,12 +473,12 @@ def test_29_query_specific_person_location():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=now)
 
     # In view
-    ans1 = tracker.answer_people_query("PERSON_LOCATION_QUERY", params={"name": "Sharath"}, current_time=now)
-    assert ans1 == "Sharath is on your left."
+    ans1 = tracker.answer_people_query("PERSON_LOCATION_QUERY", params={"name": "Alex"}, current_time=now)
+    assert ans1 == "Alex is on your left."
 
     # Not in view
     ans2 = tracker.answer_people_query("PERSON_LOCATION_QUERY", params={"name": "Alice"}, current_time=now)
@@ -497,8 +497,8 @@ def test_30_query_behind_limitation_aware():
 
 def test_31_context_set_active_person():
     ctx = ConversationContextManager()
-    pref = ctx.set_active_person(name="Sharath", track_id=1, sector_verbal="on your left")
-    assert pref.name == "Sharath"
+    pref = ctx.set_active_person(name="Alex", track_id=1, sector_verbal="on your left")
+    assert pref.name == "Alex"
     assert pref.track_id == 1
     assert ctx.active_topic == TopicType.PEOPLE_AWARENESS
     assert ctx.state == ConversationState.TOPIC_ACTIVE
@@ -506,9 +506,9 @@ def test_31_context_set_active_person():
 
 def test_32_context_resolve_person_pronoun():
     ctx = ConversationContextManager()
-    ctx.set_active_person(name="Sharath", track_id=1, sector_verbal="on your left")
+    ctx.set_active_person(name="Alex", track_id=1, sector_verbal="on your left")
     target, etype, is_amb, prompt = ctx.resolve_reference("Where is he?")
-    assert target == "Sharath"
+    assert target == "Alex"
     assert etype == "person"
     assert not is_amb
 
@@ -518,14 +518,14 @@ def test_33_context_disambiguation_when_multiple_people():
     tracker = MultiPersonTracker()
     now = time.time()
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (550, 100, 50, 50), "match_state": "UNKNOWN", "is_confirmed": False}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=now)
 
     target, etype, is_amb, prompt = ctx.resolve_reference("Where is that person?", person_tracker=tracker, current_time=now)
     assert is_amb is True
-    assert "Do you mean Sharath or the other person?" in prompt
+    assert "Do you mean Alex or the other person?" in prompt
 
 
 def test_34_context_the_other_person_resolution():
@@ -533,12 +533,12 @@ def test_34_context_the_other_person_resolution():
     tracker = MultiPersonTracker()
     now = time.time()
     dets = [
-        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Sharath"},
+        {"bbox": (50, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Alex"},
         {"bbox": (550, 100, 50, 50), "match_state": "KNOWN", "is_confirmed": True, "liveness_ok": True, "quality_ok": True, "name": "Bob"}
     ]
     tracker.update(dets, frame_shape=(480, 640), current_time=now)
-    # Focus on Sharath first
-    ctx.set_active_person(name="Sharath", track_id=1, sector_verbal="on your left")
+    # Focus on Alex first
+    ctx.set_active_person(name="Alex", track_id=1, sector_verbal="on your left")
 
     # Ask for the other person
     target, etype, is_amb, prompt = ctx.resolve_reference("Where is the other person?", person_tracker=tracker, current_time=now)
@@ -550,7 +550,7 @@ def test_34_context_the_other_person_resolution():
 def test_35_context_active_person_ttl_pruning():
     ctx = ConversationContextManager()
     now = 1000.0
-    ctx.set_active_person(name="Sharath", track_id=1, current_time=now)
+    ctx.set_active_person(name="Alex", track_id=1, current_time=now)
     assert ctx.active_person is not None
 
     # After 130s (exceeds 120s PERSON_TTL)
@@ -576,9 +576,9 @@ def test_36_command_router_people_queries():
     r4 = router.route_intent("Who do you recognize?")
     assert r4["intent"] == "KNOWN_PEOPLE_QUERY"
 
-    r5 = router.route_intent("Where is Sharath?")
+    r5 = router.route_intent("Where is Alex?")
     assert r5["intent"] == "PERSON_LOCATION_QUERY"
-    assert r5["params"]["name"] == "Sharath"
+    assert r5["params"]["name"] == "Alex"
 
     r6 = router.route_intent("Is anyone behind me?")
     assert r6["intent"] == "PEOPLE_BEHIND_QUERY"
@@ -603,7 +603,7 @@ def test_38_transient_ram_isolation():
         "is_confirmed": True,
         "liveness_ok": True,
         "quality_ok": True,
-        "name": "Sharath"
+        "name": "Alex"
     }], frame_shape=(480, 640), current_time=100.0)
     assert hasattr(tracker, "tracks")
     assert len(tracker.tracks) == 1

@@ -84,6 +84,19 @@ from .proactive_alert_manager import (
     AlertEvent
 )
 
+from .log_redaction import LogRedactionFilter, install_log_redaction_filter, get_global_redactor
+from .security_audit_log import SecurityAuditLog, SecurityAuditEntry
+from .authorization_policy import (
+    AuthorizationPolicy,
+    AuthorizationRequest,
+    AuthorizationResult,
+    OperationType,
+    PolicyDecision,
+    TrustedAction,
+    TrustedActionAllowlist,
+    is_affirmative_response
+)
+
 __version__ = "2.5.0"
 
 

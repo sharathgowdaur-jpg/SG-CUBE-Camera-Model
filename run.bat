@@ -12,4 +12,4 @@ if exist "%~dp0runtime\Scripts\python.exe" (
     set "PYTHON_EXE=python"
 )
 
-"%PYTHON_EXE%" visionclaw_gui.py
+"%PYTHON_EXE%" visionclaw_gui.py %*
