@@ -13,9 +13,8 @@ are embedded; conversation is never stored here, so a restarted app starts fresh
 """
 
 import hashlib
-import os
 import threading
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
