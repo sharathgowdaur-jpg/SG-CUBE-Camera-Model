@@ -21,7 +21,7 @@ A real-time, privacy-first multimodal AI vision companion and assistive operatin
 [![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
-[![Tests](https://img.shields.io/badge/Tests-673%20Passed%20(100%25)-00ff88?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-1465%20Passed%20(100%25)-00ff88?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe?style=for-the-badge)](LICENSE)
 
 <br>
@@ -275,8 +275,8 @@ graph TD
 
 ### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/SG-CUBE.git
-cd SG-CUBE
+git clone https://github.com/sharathgowdaur-jpg/SG-CUBE-Camera-Model.git
+cd SG-CUBE-Camera-Model
 ```
 
 ### 2️⃣ Deploy via Official Windows Installer
@@ -317,7 +317,7 @@ pytest tests/ -v
 ```
 
 ### Full Subsystem Verification Matrix
-
+ 
 | Subsystem / Feature Module | Dedicated Test Module | Tests | Result |
 | :--- | :--- | :---: | :---: |
 | **Feature 1: Voice Security** | `test_voice_security_password.py` | 35 | ✅ PASS |
@@ -328,10 +328,12 @@ pytest tests/ -v
 | **Feature 6: Conversation Context** | `test_conversation_context.py` | 42 | ✅ PASS |
 | **Feature 7: Multi-Person Awareness** | `test_multi_person_awareness.py` | 36 | ✅ PASS |
 | **Feature 8: Document Understanding** | `test_document_understanding.py` | 39 | ✅ PASS |
-| **Feature 9: System Automation** | `test_automation_manager.py` | 56 | ✅ PASS |
+| **Feature 9: System & GUI Automation** | `test_automation_manager.py`, `test_notepad_*.py`, `test_mouse_*.py` | 96 | ✅ PASS |
 | **Feature 10: Proactive Alerts** | `test_proactive_alerts.py` | 57 | ✅ PASS |
-| **Core Perception & Lifecycle** | `test_face_*.py`, `test_wake_*.py`, `test_camera_*.py` | 263 | ✅ PASS |
-| **TOTAL REGRESSION SUITE** | **All 49 Test Suites Combined** | **673** | **✅ 673 / 673 PASS (100%)** |
+| **Audio & Voice Pipeline (WASAPI + Puck)** | `test_single_voice.py`, `test_audio_input_manager.py` | 13 | ✅ PASS |
+| **Deep QA & Persistence Integration** | `qa_deep_test.py`, `test_ultimate_28_step_session.py` | 77 | ✅ PASS |
+| **Core Perception, Vision & Lifecycle** | `test_face_*.py`, `test_wake_*.py`, `test_camera_*.py`, etc. | 925 | ✅ PASS |
+| **TOTAL REGRESSION SUITE** | **All 96 Test Suites Combined** | **1,465** | **✅ 1,465 / 1,465 PASS (100%)** |
 
 ---
 

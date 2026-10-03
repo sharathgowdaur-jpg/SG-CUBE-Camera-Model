@@ -1056,6 +1056,14 @@ class CommandRouter:
         ):
             return {"intent": "OCR", "target": None, "params": {}}
 
+        # 16.5. Scene Describe Query ("What do you see around me?", "What do you see?", "Describe the scene")
+        if any(p in clean_text for p in [
+            "what do you see around me", "what can you see around me",
+            "what do you see in front of me", "what can you see in front of me",
+            "what do you see", "what can you see", "describe the scene", "describe what you see",
+        ]):
+            return {"intent": "SCENE_DESCRIBE", "target": None, "params": {"query": text}}
+
         # 17. Environment Query ("What is around me?", "Describe the environment", "Describe my surroundings")
         if any(p in clean_text for p in [
             "what is around me", "what's around me", "describe the environment", "describe my surroundings",
@@ -1078,7 +1086,7 @@ class CommandRouter:
 
         # 18. Object Search Query ("Find my phone", "Look for bottle", "Where is the bottle", "Can you find my keys", "Search for my phone", "Can you see my bag")
         find_match = re.search(r'(?:find|can you see|can you find|is there a|look for|search for|start searching for|see)\s*(?:my|a|the)?\s*([a-zA-Z0-9_\s]+)', clean_text)
-        if find_match and not any(w in clean_text for w in ["who", "read", "money", "youtube", "password", "passcode", "pin", "credential", "vault", "secret"]) \
+        if find_match and not any(w in clean_text for w in ["who", "read", "money", "youtube", "password", "passcode", "pin", "credential", "vault", "secret", "screen", "display", "monitor"]) \
                 and not re.search(r'\b(?:web|google|online|internet)\b', clean_text):  # web searches, not camera ("webcam" still matches)
             obj_name = find_match.group(1).strip()
             return {"intent": "OBJECT_SEARCH", "target": obj_name, "params": {"object_name": obj_name}}
@@ -1838,6 +1846,14 @@ class CommandRouter:
             "what did you do", "what was your last action", "what was the last action performed"
         ]):
             return {"intent": "LAST_ACTION_QUERY", "target": None, "params": {}}
+
+        # G.1. Last Query / Conversational Context Query ("what did i just ask you", "what was my last question")
+        if any(p in clean_text for p in [
+            "what did i just ask you", "what did i just ask", "what did i ask you", "what did i ask",
+            "what was my last question", "what was my previous question",
+            "what was the last thing i asked", "what was the last question"
+        ]):
+            return {"intent": "LAST_QUERY", "target": None, "params": {}}
 
         # H. Health Diagnostics & Self-Awareness Sweep
         if any(p in clean_text for p in [

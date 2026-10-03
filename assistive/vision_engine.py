@@ -2640,6 +2640,22 @@ class VisionEngine:
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 
+        elif intent == "LAST_QUERY":
+            if hasattr(self, 'context') and self.context and self.context.recent_turns:
+                last_turn = self.context.recent_turns[-1]
+                resp = f"You just asked: '{last_turn.user_text}'."
+            elif hasattr(self, 'history') and self.history:
+                recent = self.history.get_recent_history(limit=5)
+                user_msgs = [m for m in recent if m.get("role") == "user" and m.get("content") != user_transcript]
+                if user_msgs:
+                    resp = f"You asked: '{user_msgs[-1]['content']}'."
+                else:
+                    resp = "You haven't asked anything yet in this session."
+            else:
+                resp = "You haven't asked anything yet in this session."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         elif intent == "HEALTH_DIAGNOSTICS":
             diag = self.health_diagnostics.run_full_diagnostics()
             from assistive import turn_metrics

@@ -42,7 +42,7 @@ import numpy as np
 import subprocess
 import psutil
 
-sys.path.insert(0, r"D:\VisionClaw-main")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from assistive.vision_engine import VisionEngine
 from assistive.security_manager import SecurityState, SecurityLevel

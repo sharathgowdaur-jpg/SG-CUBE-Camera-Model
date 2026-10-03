@@ -5529,12 +5529,6 @@ class SGCubeApp:
             except Exception:
                 pass
 
-        try:
-            from assistive.notepad_controller import get_notepad_controller
-            get_notepad_controller().stop()
-        except Exception:
-            pass
-
 
 
 
@@ -14490,34 +14484,18 @@ class SGCubeApp:
 
 
 
-            mic_stream = sd.RawInputStream(
-
-
-
-                samplerate=16000,
-
-
-
-                channels=1,
-
-
-
-                dtype='int16',
-
-
-
-                blocksize=1024,
-
-
-
-                callback=mic_callback
-
-
-
-            )
-
-
-
+            try:
+                from assistive.audio_input_manager import get_audio_input_manager
+                mic_stream = get_audio_input_manager().open_stream(callback=mic_callback)
+            except Exception as _aim_err:
+                print(f"[MIC] AudioInputManager fallback: {_aim_err}")
+                mic_stream = sd.RawInputStream(
+                    samplerate=16000,
+                    channels=1,
+                    dtype='int16',
+                    blocksize=1024,
+                    callback=mic_callback
+                )
             mic_stream.start()
 
 
@@ -16284,6 +16262,11 @@ class SGCubeApp:
             if tracker:
                 tracker.reset_current_turn()
             self._clear_playback_queue(stop_local_tts=True)
+            try:
+                from assistive.notepad_controller import get_notepad_controller
+                get_notepad_controller().stop()
+            except Exception:
+                pass
 
         if local_response:
 

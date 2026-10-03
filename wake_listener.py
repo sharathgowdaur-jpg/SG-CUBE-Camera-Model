@@ -404,7 +404,12 @@ class SGCubeWakeListener:
                         if not self.listening_paused and self.running:
                             pcm_q.put(bytes(indata))
 
-                    with sd.RawInputStream(samplerate=16000, channels=1, dtype='int16', blocksize=1600, callback=sd_callback):
+                    try:
+                        from assistive.audio_input_manager import get_audio_input_manager
+                        stream_ctx = get_audio_input_manager().open_stream(callback=sd_callback)
+                    except Exception:
+                        stream_ctx = sd.RawInputStream(samplerate=16000, channels=1, dtype='int16', blocksize=1600, callback=sd_callback)
+                    with stream_ctx:
                         print("[HOTWORD] MICROPHONE ACTIVE")
                         print("[HOTWORD] READY")
                         accumulated = bytearray()

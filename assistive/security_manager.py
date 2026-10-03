@@ -116,6 +116,7 @@ class SecurityManager:
         "OBJECT_SEARCH": SecurityLevel.SAFE,
         "SAFETY": SecurityLevel.SAFE,
         "ENVIRONMENT": SecurityLevel.SAFE,
+        "SCENE_DESCRIBE": SecurityLevel.SAFE,
         "INTRODUCE": SecurityLevel.SAFE,
         "FACE_IDENTIFY": SecurityLevel.SAFE,
         "SETTINGS": SecurityLevel.SAFE,
@@ -170,7 +171,7 @@ class SecurityManager:
         "NOTEPAD_SELECT_ALL": SecurityLevel.SAFE,
         "NOTEPAD_COPY": SecurityLevel.SAFE,
         "NOTEPAD_PASTE": SecurityLevel.SAFE,
-        "NOTEPAD_CLEAR": SecurityLevel.PROTECTED,
+        "NOTEPAD_CLEAR": SecurityLevel.SAFE,
 
         # Protected operations (Single deletion, listings, personal memories, task edits, process closing)
         "MEMORY_RECALL": SecurityLevel.PROTECTED,
@@ -823,7 +824,7 @@ class SecurityManager:
         elif self.current_state == SecurityState.CHALLENGE_AWAIT_PHRASE:
             ok = self._verify_against_record(norm, self._cached_verifier) if self._cached_verifier else False
             if not ok and hasattr(self, "vault") and self.vault and self.vault.is_setup():
-                for cand in self.get_candidate_forms(speech_text):
+                for cand in self.get_candidate_forms(user_text):
                     if self.vault.authenticate(cand):
                         ok = True
                         break

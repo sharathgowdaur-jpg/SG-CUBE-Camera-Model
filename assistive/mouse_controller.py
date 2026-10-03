@@ -88,6 +88,7 @@ class MouseController:
                 logger.error("[MOUSE-CONTROLLER] Failed to bind user32: %s", e)
         self._stop_requested = False
         self._button_pressed = False
+        self._fallback_pos: Tuple[int, int] = (0, 0)
 
     # =========================================================================
     # VIRTUAL SCREEN GEOMETRY & BOUNDS
@@ -124,12 +125,13 @@ class MouseController:
     def get_position(self) -> Tuple[int, int]:
         """ Retrieves the real-time physical Windows cursor position. """
         if not self._is_windows or not self._user32:
-            return (0, 0)
+            return getattr(self, "_fallback_pos", (0, 0))
 
         pt = wintypes.POINT()
         if self._user32.GetCursorPos(ctypes.byref(pt)):
+            self._fallback_pos = (int(pt.x), int(pt.y))
             return (int(pt.x), int(pt.y))
-        return (0, 0)
+        return getattr(self, "_fallback_pos", (0, 0))
 
     def _clamp_to_screen(self, x: int, y: int) -> Tuple[int, int]:
         """ Clamps coordinates to valid virtual screen boundaries. """
@@ -196,6 +198,7 @@ class MouseController:
 
         if self._is_windows and self._user32:
             self._user32.SetCursorPos(target_x, target_y)
+        self._fallback_pos = (target_x, target_y)
 
         new_x, new_y = self.get_position()
         lat = (time.perf_counter() - t0) * 1000
@@ -240,6 +243,7 @@ class MouseController:
 
         if self._is_windows and self._user32:
             self._user32.SetCursorPos(x, y)
+        self._fallback_pos = (x, y)
 
         new_x, new_y = self.get_position()
         lat = (time.perf_counter() - t0) * 1000
@@ -399,6 +403,7 @@ class MouseController:
                 # 3. Final target position
                 if not interrupted:
                     self._user32.SetCursorPos(target_x, target_y)
+                    self._fallback_pos = (target_x, target_y)
         finally:
             # Crucial: Always release mouse button to prevent stuck drag
             if self._is_windows and self._user32:

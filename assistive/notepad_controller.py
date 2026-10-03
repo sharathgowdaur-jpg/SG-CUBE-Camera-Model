@@ -163,7 +163,6 @@ class NotepadController:
                 if cls == "notepad" or " - notepad" in title or title == "notepad" or "notepad" in title:
                     self._active_hwnd = fore_hwnd
                     return True
-                return False
 
             if getattr(self, "_active_hwnd", None):
                 if user32.IsWindow(self._active_hwnd) and user32.IsWindowVisible(self._active_hwnd):
@@ -232,7 +231,7 @@ class NotepadController:
             user32.SwitchToThisWindow(hwnd, True)
             time.sleep(0.1)
             fg = user32.GetForegroundWindow()
-            return self.is_notepad_active() or (fg == hwnd) or (fg == 0 and user32.IsWindowVisible(hwnd))
+            return bool(self.is_notepad_active() or (fg == hwnd) or (user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd)))
         except Exception as e:
             logger.debug("[NOTEPAD] focus_notepad_window error: %s", e)
             return False

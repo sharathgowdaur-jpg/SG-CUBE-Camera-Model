@@ -405,7 +405,6 @@ class TestVoiceConfigured(unittest.TestCase):
 
     def test_default_voice_is_puck(self):
         """The DEFAULT_PREFERENCES must specify Puck as the assistant voice."""
-        sys.path.insert(0, r'D:\VisionClaw-main')
         from assistive.memory_store import DEFAULT_PREFERENCES
         self.assertEqual(
             DEFAULT_PREFERENCES.get("assistant_voice"), "Puck",

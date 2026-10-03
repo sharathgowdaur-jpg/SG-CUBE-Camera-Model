@@ -96,8 +96,13 @@ class OfflineVoiceLoop:
 
     def _run(self) -> None:
         import sounddevice as sd
+        try:
+            from .audio_input_manager import get_audio_input_manager
+            stream_ctx = get_audio_input_manager().open_stream()
+        except Exception:
+            stream_ctx = sd.RawInputStream(samplerate=16000, channels=1, dtype="int16", blocksize=FRAME)
         next_check = time.monotonic() + RECONNECT_CHECK_S
-        with sd.RawInputStream(samplerate=16000, channels=1, dtype="int16", blocksize=FRAME) as stream:
+        with stream_ctx as stream:
             while not self._stop.is_set() and self.should_run():
                 data, _ = stream.read(FRAME)
                 self.feed(bytes(data))
