@@ -23,3 +23,23 @@ requests>=2.31.0
 aiohttp>=3.9.0
 psutil>=5.9.0
 livekit>=1.0.0
+
+# Imported by the app but previously missing here. Every one of these is imported
+# inside try/except, so a fresh install did not crash: the feature just silently
+# switched off. Floors are the versions this list was resolved and import-checked with.
+# Web UI (without these the app quietly falls back to the old Tkinter window)
+pywebview>=6.2.1
+starlette>=1.7.0
+uvicorn>=0.54.0
+# Voice volume control and audio-session routing
+pycaw>=20260927
+comtypes>=1.4.17
+# Clipboard and screen-reader OCR fallback (pytesseract also needs the Tesseract binary)
+pyperclip>=1.8.2
+pytesseract>=0.3.13
+# Voice password: speech detection + local transcription (the challenge cannot pass without them)
+faster-whisper>=1.2.1
+silero-vad>=6.2.3
+torch>=2.14.1
+# Optional, not installed by default: speaker verification (ECAPA) in the voice password.
+# pip install speechbrain
