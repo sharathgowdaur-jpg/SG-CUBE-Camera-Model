@@ -967,21 +967,25 @@ class TestUIAutomationAndWhatsApp(unittest.TestCase):
             if hasattr(engine, "scheduler"):
                 engine.scheduler.stop()
 
-    def test_vision_engine_whatsapp_send_confirmation_e2e(self):
+    @patch("webbrowser.open", return_value=True)
+    def test_vision_engine_whatsapp_send_confirmation_e2e(self, mock_open):
         engine = VisionEngine(data_dir=self.temp_dir)
+        engine.automation.ui_automation._mock_active_window = {"is_locked": False}  # never read the real window
         try:
             # 1. User says "Send I will be late to Mom"
             resp1 = engine.process_user_speech_query("Send I will be late to Mom")
-            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp1)
+            self.assertIn("'I will be late' ready for Mom", resp1)
             self.assertEqual(engine.context.state, ConversationState.AWAITING_CONFIRMATION)
 
-            # 2. User confirms with "Send it"
+            # 2. User confirms with "Send it": WhatsApp opens with the text; nothing is sent for them.
             resp2 = engine.process_user_speech_query("Send it")
-            self.assertIn("Message sent to Mom.", resp2)
+            mock_open.assert_called_once_with("https://wa.me/?text=I%20will%20be%20late")
+            self.assertIn("haven't sent it", resp2)
+            self.assertNotIn("Message sent", resp2)
 
             # 3. Test cancellation flow
             resp3 = engine.process_user_speech_query("Send I will be late to Mom")
-            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp3)
+            self.assertIn("'I will be late' ready for Mom", resp3)
             resp4 = engine.process_user_speech_query("Cancel message")
             self.assertIn("Message cancelled.", resp4)
         finally:
