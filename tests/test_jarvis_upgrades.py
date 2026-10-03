@@ -42,7 +42,7 @@ def test_tts_normalizer_comprehensive():
     assert "5 pounds" in res_money
 
     # Windows paths
-    path_text = r"The file is at C:\Users\Shara\AppData\Local\config.json"
+    path_text = r"The file is at C:\Users\Alex\AppData\Local\config.json"
     res_path = norm.normalize(path_text)
     assert "C drive" in res_path
     assert "backslash" not in res_path
