@@ -16563,14 +16563,31 @@ class SGCubeApp:
             return f"enroll_face:{name.strip().lower()}"
         return None
 
+    # ponytail: the local router returns only spoken text, no success flag, so the outcome
+    # is read from the wording. Ceiling: a failure phrased some other way reads as "done".
+    # Upgrade: have process_user_speech_query return (ok, text). Before this, every tool
+    # result told Gemini "executed"/"success" even when the text said it had failed.
+    _FAILURE_WORDING = re.compile(
+        r"\b(wasn't able|was not able|couldn't|could not|can't|cannot|unable|failed|"
+        r"not (?:running|installed|found|supported|available|allowed)|doesn't seem|is locked|denied|blocked|error)\b",
+        re.IGNORECASE)
+
+    @staticmethod
+    def _outcome_status(response_text: Any) -> str:
+        if not response_text:
+            return "failed"
+        if isinstance(response_text, str) and SGCubeApp._FAILURE_WORDING.search(response_text):
+            return "failed"
+        return "done"
+
     @staticmethod
     def _format_tool_result_content(action_key: str, response_text: Any) -> dict:
         if not action_key:
-            return {"status": "executed", "response": response_text}
+            return {"status": SGCubeApp._outcome_status(response_text), "response": response_text}
         if action_key.startswith("open_app:"):
-            return {"status": "success" if response_text else "failed", "response": response_text}
+            return {"status": SGCubeApp._outcome_status(response_text), "response": response_text}
         elif action_key.startswith("windows_settings:"):
-            return {"status": "success" if response_text else "failed", "response": response_text}
+            return {"status": SGCubeApp._outcome_status(response_text), "response": response_text}
         elif action_key.startswith("search_web:"):
             return {"status": "searched", "response": response_text}
         elif action_key == "last_action":
@@ -16588,7 +16605,7 @@ class SGCubeApp:
         elif action_key.startswith("enroll_face:") and isinstance(response_text, dict):
             return response_text
         else:
-            return {"status": "executed", "response": response_text}
+            return {"status": SGCubeApp._outcome_status(response_text), "response": response_text}
 
     async def _receive_loop(self, session, session_id):
 
@@ -17046,7 +17063,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, f"open {app_name}", self.active_history_session_id
                                     )
-                                    result_content = {"status": "success" if resp else "failed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "set_system_volume":
                                     act = fn_args.get("action", "get")
@@ -17066,7 +17083,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "set_screen_brightness":
                                     act = fn_args.get("action", "get")
@@ -17086,7 +17103,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "set_wifi_state":
                                     act = fn_args.get("action", "status")
@@ -17099,7 +17116,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "set_bluetooth_state":
                                     act = fn_args.get("action", "status")
@@ -17112,7 +17129,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "manage_bluetooth_device":
                                     act = fn_args.get("action", "list")
@@ -17126,7 +17143,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name == "search_web":
                                     q = fn_args.get("query", "")
@@ -17145,14 +17162,14 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, "read the screen", self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name in ("open_windows_settings", "open_settings_page"):
                                     p = fn_args.get("page") or "main"
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, f"open {p} settings", self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name in ("notepad_control", "write_notepad_text", "open_notepad"):
                                     act = fn_args.get("action", "open")
@@ -17174,7 +17191,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name in ("youtube_control", "search_youtube", "open_youtube"):
                                     act = fn_args.get("action", "search")
@@ -17201,7 +17218,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 elif fn_name in ("take_screenshot", "screenshot_control"):
                                     target = fn_args.get("target", "full")
@@ -17209,7 +17226,7 @@ class SGCubeApp:
                                     resp = await self._run_tool_in_executor(
                                         self.engine.process_user_speech_query, cmd, self.active_history_session_id
                                     )
-                                    result_content = {"status": "executed", "response": resp}
+                                    result_content = {"status": self._outcome_status(resp), "response": resp}
 
                                 if action_key:
                                     resp_val = result_content.get("response") if isinstance(result_content, dict) else result_content

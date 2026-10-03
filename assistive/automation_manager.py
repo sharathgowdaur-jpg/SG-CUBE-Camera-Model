@@ -988,7 +988,11 @@ class AutomationManager:
                 except Exception:
                     pass
 
-        msg = f"Closed {display_name}." if killed_any else f"Requested closing {display_name}."
+        # taskkill exits non-zero when no such process exists (or access is denied), so
+        # killed_any=False means nothing was closed; it used to say "I've closed X" anyway.
+        if not killed_any:
+            return self._fail(request, f"{display_name} doesn't seem to be running, so there was nothing to close.")
+        msg = f"Closed {display_name}."
         spoken = f"I've closed {display_name}."
         self._record_audit(request, AutomationResultStatus.SUCCESS, msg)
         return AutomationResult(

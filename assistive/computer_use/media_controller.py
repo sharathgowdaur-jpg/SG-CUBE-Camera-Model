@@ -303,7 +303,8 @@ class MediaController:
             success=res.success,
             action="youtube_mute",
             title=None,
-            spoken_summary="Muted YouTube." if res.success else "Could not mute YouTube.",
+            # "m" toggles, so the result could be either state; say what was actually done.
+            spoken_summary="Pressed YouTube's mute toggle." if res.success else "Could not reach YouTube to mute it.",
             verified=res.success
         )
 
@@ -320,7 +321,7 @@ class MediaController:
             success=res.success,
             action="youtube_unmute",
             title=None,
-            spoken_summary="Unmuted YouTube." if res.success else "Could not unmute YouTube.",
+            spoken_summary="Pressed YouTube's mute toggle." if res.success else "Could not reach YouTube to unmute it.",
             verified=res.success
         )
 
