@@ -953,19 +953,12 @@ class UIAutomationManager:
     # 3. SAFE WHATSAPP ACTIONS & SEND CONFIRMATION FLOW
     # =========================================================================
 
-    def open_whatsapp(self) -> Tuple[bool, str]:
-        """Launches or brings WhatsApp Desktop to focus."""
-        if self.automation_manager:
-            res = self.automation_manager.execute_action(
-                action_type="OPEN_APP",
-                target="whatsapp"
-            )
-            return res.status.value in ["SUCCESS", "ALLOWED"], res.spoken_response
-
-        return True, "Opened WhatsApp."
+    # There is no contacts store, so a name ("Mom") can't be turned into a chat. These
+    # used to answer "Opened chat with Mom." / "Message sent to Mom." without doing
+    # anything; now WhatsApp is really opened and the user is told what is left to do.
 
     def open_chat_with(self, contact_name: str) -> Tuple[bool, str]:
-        """Opens or switches to a chat with the specified contact in WhatsApp."""
+        """Opens WhatsApp Desktop; the user picks the chat (no name -> chat lookup exists)."""
         clean_contact = contact_name.strip()
         if not clean_contact:
             return False, "Please specify the contact name to open."
@@ -975,7 +968,12 @@ class UIAutomationManager:
         if is_locked:
             return False, lock_msg
 
-        return True, f"Opened chat with {clean_contact}."
+        if self._mock_whatsapp_state is None:
+            try:
+                os.startfile("whatsapp:")  # protocol registered by WhatsApp Desktop
+            except OSError:
+                return False, "I couldn't open WhatsApp. Is WhatsApp Desktop installed?"
+        return True, f"I opened WhatsApp. I can't pick a chat by name yet, so please open {clean_contact}'s chat."
 
     def prepare_send_message(self, contact_name: str, message: str) -> Dict[str, Any]:
         """
@@ -996,7 +994,7 @@ class UIAutomationManager:
                 "message": clean_msg
             }
 
-        confirm_prompt = f"Ready to send '{clean_msg}' to {clean_contact}. Should I send it?"
+        confirm_prompt = f"I'll open WhatsApp with '{clean_msg}' ready for {clean_contact}. Should I?"
         return {
             "status": "REQUIRES_CONFIRMATION",
             "is_locked": False,
@@ -1027,8 +1025,14 @@ class UIAutomationManager:
             self._mock_whatsapp_state.messages.append(
                 WhatsAppChatMessage(sender="You", text=clean_msg, is_incoming=False)
             )
+        else:
+            import urllib.parse
+            import webbrowser
+            # WhatsApp's documented share link: opens the contact picker with the text filled in.
+            if not webbrowser.open(f"https://wa.me/?text={urllib.parse.quote(clean_msg)}"):
+                return False, "I couldn't open WhatsApp to prepare the message."
 
-        return True, f"Message sent to {clean_contact}."
+        return True, f"WhatsApp is open with your message. Choose {clean_contact} and press Send; I haven't sent it."
 
     def cancel_send_message(self) -> str:
         """Cancels the pending message send."""

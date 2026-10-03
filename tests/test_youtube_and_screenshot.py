@@ -129,15 +129,19 @@ class TestMediaControllerYouTube(unittest.TestCase):
         call_url = mock_browser.call_args[0][0]
         self.assertIn("results?search_query=classical+lofi", call_url)
 
+    @patch("assistive.system_control.SystemControl.find_and_focus_window", return_value=False)
+    @patch("pyautogui.press")  # this test used to press a real "m" in whatever window had focus
     @patch("assistive.computer_use.media_controller.MediaController.play_media")
-    def test_mute_and_unmute_youtube(self, mock_play):
+    def test_mute_and_unmute_youtube(self, mock_play, mock_press, _focus):
         res = self.media.mute_youtube()
         self.assertTrue(res.success)
-        self.assertIn("muted", res.spoken_summary.lower())
+        # "m" toggles: claiming "Muted" would be wrong when it was already muted.
+        self.assertIn("toggle", res.spoken_summary.lower())
 
         res2 = self.media.unmute_youtube()
         self.assertTrue(res2.success)
-        self.assertIn("unmuted", res2.spoken_summary.lower())
+        self.assertIn("toggle", res2.spoken_summary.lower())
+        self.assertEqual(mock_press.call_count, 2)
 
 
 class TestVisionEngineWiring(unittest.TestCase):

@@ -1620,7 +1620,11 @@ class VisionEngine:
         elif intent == "OCR":
             ocr_res = self.ocr_engine.process_ocr(self.current_frame)
             if ocr_res["has_text"]:
-                resp = f"The document says: {ocr_res['text']}"
+                # The local OCR engine only FINDS text regions; without external text its "text"
+                # is the placeholder "Visible text in N regions", which was read out as
+                # "The document says: Visible text in 3 regions". Gemini Live receives the same
+                # camera frames and can actually read them, so hand the request to it.
+                return None
             else:
                 resp = "I cannot see clear readable text in the camera view right now."
             self.response_manager.add_response(resp, priority=2, force=True)
