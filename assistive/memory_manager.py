@@ -202,6 +202,10 @@ class MemoryManager:
 
         self._init_database()
         self._warm_cache()
+        from assistive.vector_memory import VectorMemoryIndex, warm_up
+        self.vector_index = VectorMemoryIndex(self._get_connection)
+        # Download/load the 23 MB model in the background, not mid-conversation (or mid-outage).
+        threading.Thread(target=warm_up, name="vector-memory-warmup", daemon=True).start()
 
     def is_sensitive_info(self, text: str) -> bool:
         """ Returns True if the text contains security credentials, passwords, or recovery codes """
@@ -827,8 +831,29 @@ class MemoryManager:
         except Exception as e:
             print(f"[MEMORY] [ERROR] Recall error: {e}")
 
+        # 7. Meaning-based fallback: "who is my physician" finds "my doctor is Dr. Rao".
+        # Only a confident match is returned as THE answer; similar-sounding memories
+        # ("favorite color" for "favorite food") are offered separately by closest_memory().
+        try:
+            from assistive.vector_memory import CONFIDENT_SCORE
+            hits = self.vector_index.search(query, k=1)
+            if hits and hits[0][1] >= CONFIDENT_SCORE:
+                print(f"[MEMORY] [RECALL] Vector match (score {hits[0][1]:.2f})")
+                return hits[0][0]
+        except Exception as e:
+            print(f"[MEMORY] [RECALL] Vector recall unavailable: {e}")
+
         print(f"[MEMORY] [RECALL] No matching memory found for query: '{query}'")
         return None
+
+    def closest_memory(self, query: str) -> Optional[str]:
+        """The most similar saved memory, for "I don't have that, but the closest is...".
+        Never use it as an answer: similar-sounding is not the same fact."""
+        try:
+            hits = self.vector_index.search(query, k=1)
+            return hits[0][0] if hits else None
+        except Exception:
+            return None
 
     def get_memory_record(self, key_or_query: str) -> Optional[Dict[str, Any]]:
         """ Retrieves the full structured memory dictionary for a key """

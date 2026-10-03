@@ -14378,6 +14378,27 @@ class SGCubeApp:
 
 
 
+    def _reconnect_context(self) -> str:
+        """On a reconnect within this app run, hand the new Gemini session the last turns
+        and the most relevant saved memories. History is per launch (create_session in
+        __init__), so a freshly opened app gets nothing: closing the app starts fresh."""
+        try:
+            msgs = self.engine.history.get_session_messages(self.active_history_session_id, limit=500)[-10:]
+        except Exception:
+            return ""
+        if not msgs:
+            return ""
+        lines = [f"{'User' if m.get('sender') == 'user' else 'Assistant'}: {m.get('text', '')[:300]}" for m in msgs]
+        text = "\nThe connection was restored mid-conversation. The conversation so far:\n" + "\n".join(lines)
+        last_user = next((m.get("text", "") for m in reversed(msgs) if m.get("sender") == "user"), "")
+        try:
+            hits = self.engine.memory.vector_index.search(last_user, k=3) if last_user else []
+        except Exception:
+            hits = []
+        if hits:
+            text += "\nSaved memories relevant to it: " + "; ".join(f for f, _ in hits)
+        return text
+
     def _ai_worker_thread(self, api_key):
 
 
@@ -14754,6 +14775,7 @@ class SGCubeApp:
 
 
             full_instruction += f"\nStored User Context: {user_mem_context}"
+        full_instruction += self._reconnect_context()
 
 
 
@@ -15242,6 +15264,11 @@ class SGCubeApp:
 
 
 
+            # When the session nears its context limit (the 1 fps camera fills it fast),
+            # drop the oldest content instead of having the server end the session.
+            context_window_compression=types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow()
+            ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
 
 

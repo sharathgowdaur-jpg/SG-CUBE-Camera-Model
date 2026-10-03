@@ -1351,6 +1351,9 @@ class VisionEngine:
                     resp = f"I remember that {recalled[0].lower() + recalled[1:]}" if not recalled.lower().startswith("i ") and not recalled.lower().startswith("my ") else f"{recalled}"
                 else:
                     resp = "I don't have a specific memory saved for that."
+                    closest = self.memory.closest_memory(query)
+                    if closest:  # similar-sounding is not an answer, so offer it as such
+                        resp += f" The closest thing you told me is: {closest}"
 
             if not is_sensitive_req:
                 entity = route["params"].get("entity")
