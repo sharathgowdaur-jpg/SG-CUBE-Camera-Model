@@ -108,6 +108,10 @@ class TestScreenshotController(unittest.TestCase):
 class TestMediaControllerYouTube(unittest.TestCase):
     def setUp(self):
         self.media = MediaController()
+        # Never look for, focus or type into the developer's real browser window.
+        p = patch.object(MediaController, "_focus_youtube_tab", return_value=False)
+        p.start()
+        self.addCleanup(p.stop)
 
     @patch("webbrowser.open")
     def test_open_youtube(self, mock_browser):
