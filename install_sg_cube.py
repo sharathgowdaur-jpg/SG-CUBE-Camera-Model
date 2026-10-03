@@ -3,9 +3,10 @@ SG CUBE — Official Bug-Free Production Installer
 Safely deploys SG CUBE to %LOCALAPPDATA%\\Programs\\SG-CUBE with:
 1. Complete source-to-installed code synchronization.
 2. Non-destructive user data preservation (protects existing databases, face embeddings, keys).
-3. Creation of all Windows shortcuts (Desktop, Start Menu, Startup).
-4. Windows Registry Run key configuration.
-5. End-to-end verification and compile check.
+3. A private Python runtime with every package in requirements.txt.
+4. Windows shortcuts (Desktop, Start Menu) and ONE autostart entry: the Registry Run key,
+   which is what the tray's "Start with Windows" toggle reads and writes.
+5. Compile check and an import smoke check that touches no hardware.
 """
 
 import os
@@ -41,7 +42,8 @@ ROOT_FILES_TO_SYNC = [
     "wake_word_matcher.py",
     "run.bat",
     "run_wake_listener.bat",
-    "Uninstall.bat"
+    "Uninstall.bat",
+    "requirements.txt"
 ]
 
 # Ignore patterns during copy
@@ -218,18 +220,13 @@ def create_windows_shortcuts():
     sm_uninst_link.Save()
     log("3/6", f"Start Menu folder shortcuts created: {start_menu_folder}")
 
-    # 3. Startup Shortcut
-    startup_dir = os.path.join(APPDATA, r"Microsoft\Windows\Start Menu\Programs\Startup")
-    os.makedirs(startup_dir, exist_ok=True)
-    startup_link = shell.CreateShortcut(os.path.join(startup_dir, "SG CUBE Wake Listener.lnk"))
-    startup_link.TargetPath = wake_bat
-    startup_link.WorkingDirectory = INSTALL_DIR
-    if os.path.exists(icon_path):
-        startup_link.IconLocation = f"{icon_path},0"
-    startup_link.WindowStyle = 7  # Minimized
-    startup_link.Description = "SG CUBE Background Wake Listener"
-    startup_link.Save()
-    log("3/6", "Windows Startup folder shortcut created.")
+    # 3. No Startup-folder shortcut. Autostart is the Registry Run key only: the tray's
+    # "Start with Windows" toggle edits that key, so a second launcher in the Startup
+    # folder kept starting the listener after the user switched autostart off.
+    stale = os.path.join(APPDATA, r"Microsoft\Windows\Start Menu\Programs\Startup", "SG CUBE Wake Listener.lnk")
+    if os.path.exists(stale):
+        os.remove(stale)
+        log("3/6", "Removed the duplicate Startup-folder launcher left by an older installer.")
 
 
 def configure_registry_autostart():
@@ -276,24 +273,53 @@ def verify_installation_health():
     return True
 
 
-def run_smoke_verification():
-    log("6/6", "Running post-installation automated acceptance check...")
-    test_runner = os.path.join(INSTALL_DIR, "tests", "test_master_15_domain_acceptance.py")
-    runtime_python = os.path.join(INSTALL_DIR, "runtime", "Scripts", "python.exe")
-    
-    if not os.path.exists(runtime_python):
-        runtime_python = sys.executable
+RUNTIME_PYTHON = os.path.join(INSTALL_DIR, "runtime", "Scripts", "python.exe")
 
+# Every package requirements.txt adds is imported inside try/except by the app, so a
+# missing one never crashed anything: the feature silently switched off. Check them here.
+SMOKE_IMPORTS = [
+    "google.genai", "cv2", "sounddevice", "numpy", "argon2", "cryptography", "pyautogui",
+    "ddgs", "webview", "starlette", "uvicorn", "pycaw", "comtypes", "pyperclip",
+    "faster_whisper", "silero_vad", "torch",
+    "assistive.command_router", "assistive.vision_engine",
+]
+
+
+def install_runtime_dependencies():
+    """run.bat and run_wake_listener.bat look for runtime\\Scripts\\python.exe first and
+    otherwise fall back to whatever `python` is on PATH, which usually lacks the packages."""
     import subprocess
-    cmd = [runtime_python, test_runner]
-    proc = subprocess.run(cmd, cwd=INSTALL_DIR, capture_output=True, text=True)
-    if proc.returncode == 0:
-        log("6/6", "Master Acceptance Check: 100% OK (15/15 Domains Passed).")
-        return True
-    else:
-        log("6/6", f"Acceptance Check Warning: returncode={proc.returncode}")
-        print(proc.stderr[:500])
+    log("2/6", "Preparing the private Python runtime (first install downloads ~1 GB, mostly torch)...")
+    if not os.path.exists(RUNTIME_PYTHON):
+        subprocess.run([sys.executable, "-m", "venv", os.path.join(INSTALL_DIR, "runtime")], check=True)
+    req = os.path.join(INSTALL_DIR, "requirements.txt")
+    proc = subprocess.run([RUNTIME_PYTHON, "-m", "pip", "install", "--disable-pip-version-check", "-r", req])
+    if proc.returncode != 0:
+        log("2/6", f"Package installation FAILED (pip exit {proc.returncode}). Check your internet connection and run the installer again.")
         return False
+    log("2/6", "All packages from requirements.txt are installed.")
+    return True
+
+
+def run_smoke_verification():
+    """Imports only: the old check ran a live acceptance test that changed the user's
+    volume and clipboard on every install."""
+    log("6/6", "Checking that every required package and core module imports...")
+    import subprocess
+    script = (
+        "import importlib,sys\n"
+        f"bad=[]\nfor m in {SMOKE_IMPORTS!r}:\n"
+        "    try: importlib.import_module(m)\n"
+        "    except Exception as e: bad.append(f'{m}: {type(e).__name__}: {e}')\n"
+        "print('\\n'.join(bad)); sys.exit(1 if bad else 0)\n"
+    )
+    proc = subprocess.run([RUNTIME_PYTHON, "-c", script], cwd=INSTALL_DIR, capture_output=True, text=True)
+    if proc.returncode == 0:
+        log("6/6", f"Import check passed ({len(SMOKE_IMPORTS)} modules).")
+        return True
+    log("6/6", "Import check FAILED; these features will not work:")
+    print(proc.stdout[-2000:] or proc.stderr[-2000:])
+    return False
 
 
 def main():
@@ -302,21 +328,25 @@ def main():
     print("============================================================")
     deploy_application_files()
     preserve_and_initialize_data()
+    if not install_runtime_dependencies():
+        sys.exit(1)
     create_windows_shortcuts()
     configure_registry_autostart()
     compile_ok = verify_installation_health()
     if not compile_ok:
         print("\nINSTALLATION COMPLETED WITH COMPILATION WARNINGS.")
         sys.exit(1)
-    
-    smoke_ok = run_smoke_verification()
+
+    if not run_smoke_verification():
+        print("\nINSTALLATION FINISHED, BUT SOME PACKAGES DID NOT IMPORT (see above).")
+        sys.exit(1)
     print("\n============================================================")
-    print("   SUCCESS: SG CUBE HAS BEEN INSTALLED WITHOUT ANY BUGS!   ")
+    print("   SUCCESS: SG CUBE IS INSTALLED AND ALL PACKAGES IMPORT.   ")
     print("============================================================")
     print(f"  Installed Location: {INSTALL_DIR}")
     print("  Desktop Shortcut:   %USERPROFILE%\\Desktop\\SG CUBE.lnk")
     print("  Start Menu:         SG CUBE -> SG CUBE.lnk")
-    print("  Background Daemon:  Configured in Windows Startup & Registry")
+    print("  Background Daemon:  Registry Run key (toggle it from the tray: Start with Windows)")
     print("============================================================")
 
 
