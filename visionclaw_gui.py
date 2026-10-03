@@ -89,6 +89,7 @@ from assistive.command_router import OFFICIAL_INTRODUCTION
 
 
 from assistive.security_manager import SecurityState
+from assistive import echo_guard
 
 
 
@@ -15210,6 +15211,13 @@ class SGCubeApp:
 
             output_audio_transcription=types.AudioTranscriptionConfig(),
 
+            # The user's speech no longer cuts Gemini off mid-answer: without echo
+            # cancellation, its own voice through the speakers kept interrupting it.
+            # Playback stops only for an explicit stop command (echo_guard.is_stop_command).
+            realtime_input_config=types.RealtimeInputConfig(
+                activity_handling=types.ActivityHandling.NO_INTERRUPTION
+            ),
+
 
 
             tools=tools
@@ -16119,6 +16127,11 @@ class SGCubeApp:
 
         is_security_input = hasattr(self.engine, 'security') and (self.engine.security.current_state.value != "IDLE")
 
+        # The assistant hearing itself through the speakers is not a command.
+        if not is_security_input and echo_guard.is_echo(user_text):
+            print(f"[VOICE] dropped as echo of our own speech ({len(user_text)} chars)")
+            return False
+
         if is_security_input:
             print("[VOICE] user_speech_turn_finalized: '[VOICE_PASSWORD_REDACTED]'")
             print("[GEMINI] SECURITY AUDIO SENT = NO")
@@ -16201,7 +16214,7 @@ class SGCubeApp:
                 res_content = fmt_fn(action_key, local_response)
                 tracker.record_execution(action_key, local_response, res_content, owner="finalize_path")
 
-        if any(w in user_text.lower() for w in ["stop", "cancel", "abort", "halt"]):
+        if echo_guard.is_stop_command(user_text):  # was a substring test: "bus stop" stopped playback
             if tracker:
                 tracker.reset_current_turn()
             self._clear_playback_queue(stop_local_tts=True)
@@ -16683,11 +16696,11 @@ class SGCubeApp:
 
 
 
-                            # BARGE-IN: Clear old audio queue and advance response_id immediately
-
-
-
-                            self._clear_playback_queue()
+                            # BARGE-IN only on an explicit stop command. Any speech used to clear
+                            # playback, so a cough, the TV or the assistant's own echo cut it off.
+                            if echo_guard.is_stop_command(f"{self.user_transcript_buffer or ''} {text_chunk}") \
+                                    or echo_guard.is_stop_command(text_chunk):
+                                self._clear_playback_queue()
 
 
 
@@ -16771,6 +16784,7 @@ class SGCubeApp:
 
 
                             if not turn_intercepted and not getattr(self, 'current_turn_intercepted', False):
+                                echo_guard.note_assistant_speech(text_chunk)  # only audio that is actually played
                                 self.gui_queue.put(("TRANSCRIPT_AI", text_chunk))
 
 
