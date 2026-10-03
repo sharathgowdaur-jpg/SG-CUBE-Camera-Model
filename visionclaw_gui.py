@@ -85,11 +85,11 @@ from assistive.vision_engine import VisionEngine
 
 
 from assistive.command_router import OFFICIAL_INTRODUCTION
+from assistive import turn_metrics
 
 
 
 from assistive.security_manager import SecurityState
-from assistive import turn_metrics
 
 
 
