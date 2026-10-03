@@ -19,17 +19,11 @@ tests/first_run_test_data/
 tests/persistence_test_data/
 tests/standalone_backend_tmp/
 
-# Application user data and databases
-data/memory/*.db*
-data/history/*.db*
-data/face_memory/*/
-data/face_memory/*.db*
-data/user_preferences/*.dat
-data/user_preferences/*.json
-data/secure_vault/*.db*
-data/tasks/*.db*
-data/screenshots/*
-data/logs/*.log
+# Application user data: everything under data/ is personal (DPAPI master keys, vault verifier,
+# voiceprint, face gallery, memory, history). Only the folder skeleton and bundled models are tracked.
+data/*/**
+!data/*/.gitkeep
+!data/models/*.onnx
 *.db
 *.db-shm
 *.db-wal
@@ -48,6 +42,7 @@ dist/
 *.egg-info/
 install/
 installer/
+*.spec
 
 # IDE & OS files
 .vscode/

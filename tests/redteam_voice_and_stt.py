@@ -139,7 +139,7 @@ class TestTTSNormalizationRedTeam:
 
     def test_windows_paths_and_network_ips(self):
         # Windows file paths
-        path_test = r"Config stored at C:\Users\Shara\AppData\Local\Programs\SG-CUBE\data\config.json"
+        path_test = r"Config stored at C:\Users\Alex\AppData\Local\Programs\SG-CUBE\data\config.json"
         out_path = self.norm.normalize(path_test)
         assert "C drive" in out_path
         assert "backslash" not in out_path

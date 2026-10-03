@@ -415,7 +415,7 @@ class TestVoiceConfigured(unittest.TestCase):
     def test_production_voice_is_puck(self):
         """The production preferences.json must specify Puck."""
         import json
-        pref_path = r'C:\Users\Shara\AppData\Local\Programs\SG-CUBE\data\user_preferences\preferences.json'
+        pref_path = os.path.expandvars(r'%LOCALAPPDATA%\Programs\SG-CUBE\data\user_preferences\preferences.json')
         if os.path.exists(pref_path):
             with open(pref_path) as f:
                 prefs = json.load(f)

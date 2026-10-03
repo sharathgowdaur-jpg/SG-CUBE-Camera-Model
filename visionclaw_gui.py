@@ -17180,7 +17180,9 @@ class SGCubeApp:
                                     act = fn_args.get("action", "search")
                                     q = fn_args.get("query", "")
                                     secs = fn_args.get("seconds", 10)
-                                    if act in ("search", "play"):
+                                    if act == "search":
+                                        cmd = f"search youtube for {q}" if q else "open youtube"
+                                    elif act == "play":
                                         cmd = f"play {q} on youtube" if q else "open youtube"
                                     elif act == "open":
                                         cmd = "open youtube"

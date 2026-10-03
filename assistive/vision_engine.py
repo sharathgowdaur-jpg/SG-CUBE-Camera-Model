@@ -2091,7 +2091,7 @@ class VisionEngine:
             return resp
 
         # --- MEDIA & MUSIC PLAYBACK INTENTS ---
-        elif intent == "PLAY_MEDIA":
+        elif str(intent) == "PLAY_MEDIA":  # str(): DualPlayMediaIntent("YOUTUBE_SEARCH") also == "PLAY_MEDIA", which made every search autoplay
             query = route["params"].get("query") or route.get("target") or user_transcript
             if self.context.contains_pronoun_reference(query):
                 res_target, entity_type, _, _ = self.context.resolve_reference(user_transcript)
@@ -2145,45 +2145,52 @@ class VisionEngine:
         # --- APPROVED FEATURE: YOUTUBE SEARCH, PLAY & CONTROL ---
         elif intent == "YOUTUBE_SEARCH":
             query = route.get("params", {}).get("query", "")
-            ok, spoken, details = self.computer_use.search_youtube(query)
+            res = self.computer_use.search_youtube(query)
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_OPEN":
-            ok, spoken, details = self.computer_use.open_youtube()
+            res = self.computer_use.open_youtube()
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_MUTE":
-            ok, spoken, details = self.computer_use.mute_youtube()
+            res = self.computer_use.mute_youtube()
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_UNMUTE":
-            ok, spoken, details = self.computer_use.unmute_youtube()
+            res = self.computer_use.unmute_youtube()
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_SEEK_FORWARD":
             secs = route.get("params", {}).get("seconds", 10)
-            ok, spoken, details = self.computer_use.seek_forward(seconds=secs)
+            res = self.computer_use.seek_forward(seconds=secs)
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_SEEK_BACKWARD":
             secs = route.get("params", {}).get("seconds", 10)
-            ok, spoken, details = self.computer_use.seek_backward(seconds=secs)
+            res = self.computer_use.seek_backward(seconds=secs)
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
 
         elif intent == "YOUTUBE_CLOSE":
-            ok, spoken, details = self.computer_use.close_youtube()
+            res = self.computer_use.close_youtube()
+            spoken, details = res.spoken_summary, res.details
             self.last_action_summary = details
             self.response_manager.add_response(spoken, priority=2, force=True)
             return spoken
@@ -2219,20 +2226,14 @@ class VisionEngine:
         # --- COMPUTER-USE & WEB SEARCH INTENTS (Phase 2 Integration) ---
         elif intent == "WEB_SEARCH":
             query = route["params"].get("query") or route.get("target") or user_transcript
-            try:
-                import webbrowser
-                import urllib.parse
-                encoded_q = urllib.parse.quote_plus(query)
-                webbrowser.open(f"https://www.google.com/search?q={encoded_q}", new=2)
-                self.last_opened_item = f"Google search for '{query}'"
-            except Exception:
-                pass
+            # Answer by voice only; a browser tab opens when the user asks ("open the first result").
             results = self.computer_use.web_tools.search_web(query, max_results=3)
-            if results:
+            if results and results[0].get("url"):
                 self.artifact_cache.store_artifacts("web_search", results, query=query)
                 self.last_action_summary = f"searched the web for '{query}'"
-            summary = self.computer_use.web_tools.format_search_summary(results)
-            resp = f"Here is what I found on the web:\n\n{summary}" if summary else f"I opened Google search for '{query}'."
+                resp = f"Here is what I found on the web:\n\n{self.computer_use.web_tools.format_search_summary(results)}"
+            else:
+                resp = f"I couldn't reach web search right now, so I have no results for '{query}'."
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 

@@ -46,6 +46,9 @@ from assistive.tts_normalizer import TTSNormalizer
 from assistive.automation_manager import AutomationManager, AutomationActionType
 
 
+@unittest.skipUnless(os.environ.get("SG_CUBE_LIVE_TESTS") == "1",
+                     "drives the real machine: volume, brightness, clipboard, opens browser tabs and "
+                     "force-kills every VS Code and Settings window; set SG_CUBE_LIVE_TESTS=1 to run")
 class HardcoreVoiceAcceptance12(unittest.TestCase):
     engine: VisionEngine = None
     system_control: SystemControl = None
@@ -348,7 +351,7 @@ class HardcoreVoiceAcceptance12(unittest.TestCase):
     # =========================================================================
     def test_11_tts_normalization(self):
         print("\n--- TEST 11: TTS Normalization ---")
-        raw_text = "Check **bold** text, visit [Google](https://google.com) and verify C:\\Users\\Shara\\test.txt for $49.99."
+        raw_text = "Check **bold** text, visit [Google](https://google.com) and verify C:\\Users\\Alex\\test.txt for $49.99."
         normalizer = TTSNormalizer()
         clean = normalizer.normalize(raw_text)
         self.assertNotIn("**", clean)

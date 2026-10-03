@@ -108,15 +108,20 @@ class TestMediaController(unittest.TestCase):
             verification_engine=self.verifier
         )
 
+    @patch.object(MediaController, "_focus_youtube_tab", return_value=False)
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
     @patch("webbrowser.open")
     @patch("pyautogui.click")
-    def test_play_media_bounded_loop(self, mock_click, mock_open):
+    def test_play_media_bounded_loop(self, mock_click, mock_open, mock_urlopen, _sleep, _focus):
+        mock_urlopen.return_value.read.return_value = b'<a href="/watch?v=4xqo7D2k8HM">'
         res = self.media.play_media("Believer Imagine Dragons", platform="youtube")
         self.assertTrue(res.success)
         self.assertEqual(res.action, "play")
         self.assertIn("Believer", res.spoken_summary)
         mock_open.assert_called_once()
-        self.assertIn("youtube.com/results?search_query=", mock_open.call_args[0][0])
+        # "play" opens the first video itself, not a results page the user then has to pick from.
+        self.assertEqual(mock_open.call_args[0][0], "https://www.youtube.com/watch?v=4xqo7D2k8HM")
 
     @patch("pyautogui.press")
     def test_pause_and_resume(self, mock_press):

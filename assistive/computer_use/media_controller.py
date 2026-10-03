@@ -56,6 +56,37 @@ class MediaController:
         self.element_locator = element_locator or ElementLocator()
         self.verification_engine = verification_engine or VerificationEngine()
 
+    def _focus_youtube_tab(self) -> bool:
+        """True only if a browser window already showing YouTube is now in the foreground."""
+        try:
+            import ctypes
+            from assistive.system_control import get_system_control
+            sc = get_system_control()
+            # ponytail: a browser's window title is its ACTIVE tab, so YouTube open in a background
+            # tab is not found and we fall back to a new tab. Upgrade: CDP/UI Automation tab listing.
+            hwnd = sc._find_window_by_query(" - youtube")
+            if not hwnd or not sc.find_and_focus_window(" - youtube"):
+                return False
+            time.sleep(0.3)
+            # Windows can refuse SetForegroundWindow; never type a URL into whatever else has focus.
+            return ctypes.windll.user32.GetForegroundWindow() == hwnd
+        except Exception:
+            return False
+
+    def _open_youtube_url(self, url: str) -> None:
+        """Navigates the YouTube tab that is already open; opens a new tab only if there is none."""
+        if self._focus_youtube_tab():
+            ex = self.action_executor
+            if ex.hotkey("ctrl", "l").success and ex.type_text(url, interval=0.005).success and ex.press_key("enter").success:
+                return
+        webbrowser.open(url, new=2)
+        time.sleep(1.2)
+        try:
+            from assistive.system_control import get_system_control
+            get_system_control().find_and_focus_window("youtube")
+        except Exception:
+            pass
+
     def play_media(self, query: str, platform: str = "youtube") -> MediaActionResult:
         """
         Safely searches for and starts playback of the requested media.
@@ -85,7 +116,8 @@ class MediaController:
         except Exception as e:
             logger.debug("[MEDIA-CONTROLLER] Direct video resolution error: %s", e)
 
-        target_url = search_url
+        # The first result was resolved but never opened, so "play" only ever showed a results page.
+        target_url = f"https://www.youtube.com/watch?v={direct_video_id}" if direct_video_id else search_url
 
         # Store in session interaction artifact cache for ordinal navigation ("open the second result")
         try:
@@ -104,25 +136,18 @@ class MediaController:
 
         # 2. Open via safe approved browser mechanism
         try:
-            webbrowser.open(target_url, new=2)
+            self._open_youtube_url(target_url)
         except Exception as e:
             logger.error("[MEDIA-CONTROLLER] Failed to open URL: %s", e)
             return MediaActionResult(False, "play", clean_query, f"Failed to open browser for {clean_query}.")
-
-        # Allow browser window to render and bring to front
-        time.sleep(1.2)
-        try:
-            from assistive.system_control import get_system_control
-            get_system_control().find_and_focus_window("youtube")
-        except Exception:
-            pass
 
         return MediaActionResult(
             success=True,
             action="play",
             title=clean_query,
-            spoken_summary=f"Playing '{clean_query}' on YouTube.",
-            verified=True,
+            spoken_summary=(f"Playing '{clean_query}' on YouTube." if direct_video_id
+                            else f"I couldn't pick a video, so I opened YouTube results for '{clean_query}'."),
+            verified=bool(direct_video_id),
             details=f"Opened {target_url}"
         )
 
@@ -223,17 +248,10 @@ class MediaController:
         logger.info("[MEDIA-CONTROLLER] Searching YouTube: '%s' -> %s", clean_query, search_url)
 
         try:
-            webbrowser.open(search_url, new=2)
+            self._open_youtube_url(search_url)
         except Exception as e:
             logger.error("[MEDIA-CONTROLLER] Failed to open YouTube search: %s", e)
             return MediaActionResult(False, "youtube_search", clean_query, f"Could not open YouTube for {clean_query}.")
-
-        time.sleep(1.0)
-        try:
-            from assistive.system_control import get_system_control
-            get_system_control().find_and_focus_window("youtube")
-        except Exception:
-            pass
 
         return MediaActionResult(
             success=True,
@@ -248,6 +266,8 @@ class MediaController:
         """ Opens YouTube homepage """
         target_url = "https://www.youtube.com"
         logger.info("[MEDIA-CONTROLLER] Opening YouTube")
+        if self._focus_youtube_tab():  # don't navigate away from what's already playing
+            return MediaActionResult(True, "youtube_open", "YouTube", "YouTube is already open.", True, "Focused existing YouTube tab")
         try:
             webbrowser.open(target_url, new=2)
         except Exception as e:
