@@ -2639,7 +2639,8 @@ class VisionEngine:
 
         elif intent == "HEALTH_DIAGNOSTICS":
             diag = self.health_diagnostics.run_full_diagnostics()
-            resp = f"System diagnostic check: {diag['spoken_summary']}"
+            from assistive import turn_metrics
+            resp = f"System diagnostic check: {diag['spoken_summary']} {turn_metrics.spoken_summary()}"
             self.response_manager.add_response(resp, priority=2, force=True)
             return resp
 

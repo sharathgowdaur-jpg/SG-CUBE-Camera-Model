@@ -89,6 +89,7 @@ from assistive.command_router import OFFICIAL_INTRODUCTION
 
 
 from assistive.security_manager import SecurityState
+from assistive import turn_metrics
 
 
 
@@ -14511,6 +14512,7 @@ class SGCubeApp:
 
 
                 print(f"[FAILOVER] Key {curr_key_num} failed -> Failing over to Key {next_num}")
+                turn_metrics.record_event("key_failover")
 
 
 
@@ -14539,6 +14541,7 @@ class SGCubeApp:
 
 
                 print("[FAILOVER] All configured Gemini API keys failed or on cooldown.")
+                turn_metrics.record_event("all_keys_failed")
 
 
 
@@ -15410,6 +15413,7 @@ class SGCubeApp:
 
 
             reason, _ = self.engine.key_manager.classify_failure(e)
+            turn_metrics.record_event("session_error")
 
 
 
@@ -16835,6 +16839,7 @@ class SGCubeApp:
 
 
                                             print(f"[VOICE] response_first_chunk (time_to_first_audio={latency:.3f}s)")
+                                            self._turn_first_audio_s = latency if t_speech_start > 0 else None
 
 
 
@@ -16887,6 +16892,11 @@ class SGCubeApp:
 
 
                             print(f"[VOICE] response_complete (total_response_time={total_time:.3f}s)")
+                            if t_speech_start > 0:  # a reply to the user, not a greeting or alert
+                                turn_metrics.record_turn(
+                                    getattr(self, "_turn_first_audio_s", None), total_time,
+                                    "local" if (turn_intercepted or getattr(self, "current_turn_intercepted", False)) else "gemini")
+                            self._turn_first_audio_s = None
 
 
 
