@@ -4404,7 +4404,9 @@ class SGCubeApp:
 
         # SECURITY PATH: Always use local SAPI — must never depend on Gemini network.
         # Security challenges (voice password prompts/responses) require instant, offline-capable speech.
-        if is_security:
+        # Offline mode takes the same path: with no Gemini session nothing would be said at all.
+        offline = getattr(self, "_offline_voice", None) is not None and self._offline_voice.running
+        if is_security or offline:
             print(f"[SECURITY-VOICE] SAPI local path for protected response: '{text[:60]}'")
             if os.name == 'nt':
                 try:
@@ -4445,6 +4447,32 @@ class SGCubeApp:
 
 
 
+
+    def _start_offline_voice(self):
+        """Listen locally (faster-whisper + SAPI) while Gemini is unreachable."""
+        if self.current_state in ("SLEEPING", "STOPPED", "CLOSED") or getattr(self, "_is_closing", False):
+            return
+        try:
+            from assistive.offline_voice import OfflineVoiceLoop
+            if getattr(self, "_offline_voice", None) is None:
+                aom = getattr(self, "audio_output_manager", None)
+                self._offline_voice = OfflineVoiceLoop(
+                    engine=self.engine,
+                    speak=lambda text: self._speak_local_response(text),
+                    is_speaking=lambda: bool(aom and aom.is_speaking()),
+                    should_run=lambda: self.current_state not in ("SLEEPING", "STOPPED", "CLOSED")
+                    and not getattr(self, "_is_closing", False),
+                    on_network_back=lambda: self.root.after(0, self.start_ai),
+                )
+            self._offline_voice.start()
+            print("[OFFLINE-VOICE] Gemini unreachable: listening locally (faster-whisper + SAPI).")
+        except Exception as e:
+            print(f"[OFFLINE-VOICE] Could not start offline listening: {e}")
+
+    def _stop_offline_voice(self):
+        if getattr(self, "_offline_voice", None) is not None and self._offline_voice.running:
+            self._offline_voice.stop()
+            print("[OFFLINE-VOICE] Stopped: Gemini session is back.")
 
     def register_event_listener(self, listener):
         self.event_listener = listener
@@ -12165,6 +12193,10 @@ class SGCubeApp:
 
 
     def start_ai(self, api_key=None):
+        if not getattr(self, "_offline_model_prefetched", False):  # so offline mode works in a later outage
+            self._offline_model_prefetched = True
+            from assistive.offline_voice import prefetch_models
+            threading.Thread(target=prefetch_models, name="whisper-prefetch", daemon=True).start()
 
 
 
@@ -12193,6 +12225,7 @@ class SGCubeApp:
 
 
                 self.set_state("DISCONNECTED")
+                self._start_offline_voice()
 
 
 
@@ -14543,6 +14576,7 @@ class SGCubeApp:
 
 
                 self.set_state("DISCONNECTED")
+                self._start_offline_voice()
 
 
 
@@ -15245,6 +15279,7 @@ class SGCubeApp:
 
 
                 session_established = True
+                self._stop_offline_voice()  # Gemini is back: it owns the mic and the voice again
 
 
 
