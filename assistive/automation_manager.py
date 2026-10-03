@@ -674,8 +674,11 @@ class AutomationManager:
                 elif hasattr(self.security, "is_password_set") and self.security.is_password_set():
                     requires_security_auth = True
 
-        # Confirmation required if permission is ASK_EACH_TIME or if explicitly riskier
-        requires_confirmation = (perm == AutomationPermission.ASK_EACH_TIME)
+        # Confirmation required if permission is ASK_EACH_TIME or if explicitly riskier.
+        # The "riskier" half was never implemented: a saved ALLOWED let CLOSE_APP force-kill
+        # (losing unsaved work) without asking. These always ask; DENIED still denies.
+        requires_confirmation = (perm == AutomationPermission.ASK_EACH_TIME) or action_type in (
+            AutomationActionType.CLOSE_APP, AutomationActionType.LOCK_WORKSTATION, AutomationActionType.SEND_MESSAGE)
 
         # If permission is DENIED or risk is BLOCKED, cannot execute
         if perm == AutomationPermission.DENIED:
