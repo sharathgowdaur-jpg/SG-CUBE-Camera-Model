@@ -342,7 +342,11 @@ class TestAutomationSecurityIntegration(unittest.TestCase):
         self.assertEqual(res.status, AutomationResultStatus.REQUIRES_SECURITY_AUTH)
         self.assertIn("Voice Security Password", res.spoken_response)
 
-    def test_authorized_session_bypasses_security_challenge(self):
+    # The close itself is mocked: this test is about the security bypass. It ran a real
+    # `taskkill` (closing the developer's Calculator if open) and only passed because closing
+    # used to report SUCCESS even when nothing was running.
+    @patch("subprocess.run", return_value=MagicMock(returncode=0))
+    def test_authorized_session_bypasses_security_challenge(self, _mock_run):
         ok, msg, rc = self.sec.set_password("open sesame river")
         self.assertTrue(ok)
         self.sec.authorize_session(60.0)
