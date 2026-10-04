@@ -829,7 +829,8 @@ class AutomationManager:
 
         # --- PRIMARY PATH: Gemini Flash multimodal screen understanding ---
         try:
-            reader = get_screen_reader(api_key=os.environ.get("GEMINI_API_KEY", ""))
+            reader = get_screen_reader(api_key=os.environ.get("GEMINI_API_KEY", ""),
+                                       key_manager=getattr(self, "key_manager", None))
             result = reader.read_screen()
             spoken = result.get("spoken_response", "").strip()
             if spoken and len(spoken) > 10:

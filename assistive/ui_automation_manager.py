@@ -48,7 +48,8 @@ except ImportError:
 
 try:
     import pytesseract
-    HAS_PYTESSERACT = True
+    from .screen_reader_controller import locate_tesseract
+    HAS_PYTESSERACT = locate_tesseract()  # tesseract.exe is usually not on PATH on Windows
 except ImportError:
     HAS_PYTESSERACT = False
 

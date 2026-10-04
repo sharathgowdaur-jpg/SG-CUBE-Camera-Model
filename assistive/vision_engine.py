@@ -212,6 +212,7 @@ class VisionEngine:
 
         # Permission-Based System Automation Engine (SG CUBE 2.5 Feature 9)
         self.automation = AutomationManager(pref_dir=self.store.pref_dir, security_manager=self.security)
+        self.automation.key_manager = self.key_manager  # screen reader tries every configured key
 
         # Bounded Computer-Use Subsystem (Phase 2 Integration)
         self.computer_use = ComputerUseAgent(

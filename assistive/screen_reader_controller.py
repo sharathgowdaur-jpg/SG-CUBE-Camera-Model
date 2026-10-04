@@ -20,7 +20,6 @@ import io
 import os
 import re
 import time
-import base64
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Optional PIL ──────────────────────────────────────────────────────────────
 try:
-    from PIL import ImageGrab, Image
+    from PIL import ImageGrab, Image, ImageOps
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -48,6 +47,27 @@ try:
     HAS_PYTESSERACT = True
 except ImportError:
     HAS_PYTESSERACT = False
+
+
+def locate_tesseract() -> bool:
+    """pytesseract only wraps tesseract.exe, and the Windows installer does not put it on
+    PATH, so OCR silently returned nothing. Look in the standard install folders too."""
+    if not HAS_PYTESSERACT:
+        return False
+    import shutil
+    if shutil.which(pytesseract.pytesseract.tesseract_cmd) or shutil.which("tesseract"):
+        return True
+    for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                 os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")):
+        exe = os.path.join(root, "Tesseract-OCR", "tesseract.exe")
+        if os.path.isfile(exe):
+            pytesseract.pytesseract.tesseract_cmd = exe
+            return True
+    return False
+
+
+TESSERACT_FOUND = locate_tesseract()
 
 # ── Optional Gemini SDK (google.genai) ────────────────────────────────────────
 try:
@@ -69,6 +89,20 @@ _BROWSER_PROCESSES = {
     "opera.exe": "Opera",
     "vivaldi.exe": "Vivaldi",
 }
+
+# Lines that must be spoken before anything else in the OCR fallback.
+_ALERT_RE = re.compile(
+    r"\b(error|warning|failed|failure|could ?n[o']t|cannot|can't|unable|denied|invalid|"
+    r"not found|disk is full|try again|expired|incorrect|not responding)\b",
+    re.IGNORECASE,
+)
+
+
+def _sentence(line: str) -> str:
+    """OCR lines are fragments; end each with a stop so TTS pauses between them."""
+    line = line.strip()
+    return line if line[-1:] in ".!?:;," else line + "."
+
 
 _BROWSER_TITLE_SUFFIXES = (
     " - Google Chrome",
@@ -93,7 +127,6 @@ _KNOWN_PROCESSES = {
     "notepad.exe": "Notepad",
     "wordpad.exe": "WordPad",
     "calc.exe": "Calculator",
-    "mspaint.exe": "MS Paint",
     "explorer.exe": "File Explorer",
     "taskmgr.exe": "Task Manager",
     "control.exe": "Control Panel",
@@ -146,6 +179,9 @@ INSTRUCTIONS:
 
 STRICT RULES:
 - Never invent text, URLs, names, or content that is not clearly visible in the screenshot.
+- Always say exact values exactly as shown: dates, times, amounts, prices, codes, reference and
+  booking numbers, names, percentages and on/off states. Never summarize them away; the user
+  cannot see the screen to check. Brevity applies to description, not to these values.
 - If something is unclear, say so honestly (e.g., "There is text I cannot read clearly").
 - Do not mention decorative elements, ads, or irrelevant UI chrome unless asked.
 - Keep the response concise and natural — designed to be spoken aloud.
@@ -166,15 +202,28 @@ class ScreenReaderController:
       Fallback: if Gemini unavailable → structured OCR + UIA summary
     """
 
-    GEMINI_SCREEN_MODEL = "gemini-2.0-flash"
+    # Tried in order. gemini-2.0-flash was retired (404 "no longer available"), which made
+    # every read fall back; a retired model now moves on instead of failing the read.
+    GEMINI_SCREEN_MODELS = ("gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash")
+    # A blind user waits in silence for this. Overloaded (503) or slow requests are cut off and
+    # the next option (or the OCR fallback, 95% of facts in ~0.6 s) is used instead.
+    GEMINI_START_BY_S = 8.0          # no new attempt starts after this; quota/overload errors return in ~0.5 s
+    GEMINI_REQUEST_TIMEOUT_S = 10.0  # the API rejects shorter deadlines: "Minimum allowed deadline is 10s"
+    QUOTA_REST_S = 60.0              # skip a (model, key) this long after a 429/503
+    GEMINI_IMAGE_MAX_WIDTH = 1280  # px sent to Gemini (token cost); see tests/test_screen_reader_accuracy.py
     MAX_OCR_PREVIEW = 800    # chars of OCR text sent to Gemini
     MAX_CONTROLS_PREVIEW = 20  # max UIA control names in prompt
+    FALLBACK_MAX_WORDS = 150   # ~1 minute of speech; the rest is offered, not dropped silently
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, key_manager: Optional[Any] = None):
         """
         :param api_key: Gemini API key. If None, tries os.environ["GEMINI_API_KEY"].
+        :param key_manager: the app's APIKeyManager; its keys are tried read-only on quota errors.
         """
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.key_manager = key_manager
+        self._last_good: Optional[Tuple[str, str]] = None  # (model, key) that answered last
+        self._resting_until: Dict[Tuple[str, str], float] = {}  # (model, key) -> skip until (quota/overload)
 
     def set_api_key(self, api_key: str) -> None:
         """Updates the Gemini API key."""
@@ -326,17 +375,32 @@ class ScreenReaderController:
         t0 = time.perf_counter()
         lines: List[str] = []
         try:
+            # Enlarge, never shrink: downscaling a 1920 px screen to 1280 px turned 12 px text
+            # into ~8 px that Tesseract cannot read. Measured on 8 test screens: facts present in
+            # the OCR text went 81% (1280 px) -> 95% (2x + autocontrast), ~0.4 s per screen.
             gray = img.convert("L")
-            if gray.width > 1280:
-                scale = 1280.0 / gray.width
+            scale = min(2.0, 3840.0 / max(1, gray.width))
+            if abs(scale - 1.0) > 0.01:
                 gray = gray.resize(
-                    (1280, max(1, int(gray.height * scale))),
-                    Image.Resampling.BILINEAR
+                    (max(1, int(gray.width * scale)), max(1, int(gray.height * scale))),
+                    Image.Resampling.LANCZOS
                 )
-            raw = pytesseract.image_to_string(gray)
+            gray = ImageOps.autocontrast(gray)
+            raw = pytesseract.image_to_string(gray, config="--psm 3")
+            # psm 3 keeps side-by-side panes apart but reads tables and settings lists column
+            # by column ("Month. January. Rent. 18000..."), losing which value is whose. When
+            # most lines are one or two words, re-read as one block (psm 6) so rows stay together.
+            # ponytail: 0.5 threshold from 8 synthetic screens (email 0.38 stays psm 3; settings
+            # 0.56, spreadsheet 0.95, login 0.60 switch). Re-measure on real screens if mis-chosen.
+            nonblank = [ln for ln in raw.splitlines() if ln.strip()]
+            if nonblank and sum(len(ln.split()) <= 2 for ln in nonblank) / len(nonblank) > 0.5:
+                raw = pytesseract.image_to_string(gray, config="--psm 6")
             seen: set = set()
             for ln in raw.splitlines():
                 clean = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", ln).strip()
+                # Drop symbol-only tokens: toggle switches and icons OCR as "@)" or "( @",
+                # which TTS reads aloud as "at". Tokens with any letter or digit are kept.
+                clean = " ".join(t for t in clean.split() if re.search(r"[A-Za-z0-9&]", t))
                 if len(clean) >= 2 and not clean.startswith(("---", "===", "___")):
                     lc = clean.lower()
                     if lc not in seen:
@@ -416,18 +480,18 @@ class ScreenReaderController:
         if not HAS_GENAI or not screenshot:
             return "", ""
 
-        api_key = self._api_key or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key or len(api_key) < 10:
+        keys = self._candidate_keys()
+        if not keys:
             logger.debug("[SCREEN-READER] No Gemini API key available for screen reading.")
             return "", ""
 
         try:
-            # Resize screenshot to save tokens — max 1280px wide
+            # Resize screenshot to save tokens
             img = screenshot
-            if img.width > 1280:
-                scale = 1280.0 / img.width
+            if img.width > self.GEMINI_IMAGE_MAX_WIDTH:
+                scale = self.GEMINI_IMAGE_MAX_WIDTH / img.width
                 img = img.resize(
-                    (1280, max(1, int(img.height * scale))),
+                    (self.GEMINI_IMAGE_MAX_WIDTH, max(1, int(img.height * scale))),
                     Image.Resampling.LANCZOS
                 )
 
@@ -461,17 +525,8 @@ class ScreenReaderController:
                 controls_preview=controls_preview,
             )
 
-            # Build Gemini request
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=self.GEMINI_SCREEN_MODEL,
-                contents=[
-                    genai_types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-                    prompt,
-                ],
-            )
-
-            text = (response.text or "").strip()
+            contents = [genai_types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"), prompt]
+            text = self._generate_with_fallbacks(keys, contents)
             if text and len(text) > 10:
                 logger.debug("[SCREEN-READER] Gemini response length: %d chars", len(text))
                 return text, "gemini"
@@ -480,6 +535,60 @@ class ScreenReaderController:
             logger.warning("[SCREEN-READER] Gemini vision call failed: %s", e)
 
         return "", ""
+
+    def _candidate_keys(self) -> List[str]:
+        """The configured key first, then the app's other keys (read-only: a screen-reader
+        quota error must not mark a key failed for the live voice session)."""
+        keys = [self._api_key or os.environ.get("GEMINI_API_KEY", "")]
+        km = self.key_manager
+        if km is not None:
+            keys += [km.keys.get(n, "") for n in getattr(km, "priority", [1, 2, 3])]
+        out: List[str] = []
+        for k in keys:
+            k = (k or "").strip()
+            if len(k) >= 10 and k not in out:
+                out.append(k)
+        return out
+
+    def _generate_with_fallbacks(self, keys: List[str], contents: list) -> str:
+        """Try (model, key) pairs: a retired model (404) skips to the next model, a quota or
+        other error tries the next key. The pair that answered last is tried first."""
+        pairs = [(m, k) for m in self.GEMINI_SCREEN_MODELS for k in keys]
+        if self._last_good in pairs:
+            pairs.remove(self._last_good)
+            pairs.insert(0, self._last_good)
+        retired: set = set()
+        start_by = time.monotonic() + self.GEMINI_START_BY_S
+        for model, key in pairs:
+            if model in retired or time.monotonic() > start_by \
+                    or self._resting_until.get((model, key), 0.0) > time.monotonic():
+                continue
+            try:
+                # Keep the client referenced: an inline genai.Client(...) is garbage-collected
+                # and closed before the request is sent ("client has been closed").
+                client = genai.Client(api_key=key, http_options=genai_types.HttpOptions(
+                    timeout=int(1000 * self.GEMINI_REQUEST_TIMEOUT_S)))
+                # Measured on gemini-2.5-flash (3 runs each): thinking on 16.5 s median (6.5-25 s),
+                # thinking off 4.0 s (3.8-4.4 s) with the same facts read. Not applied to 3.x
+                # models: their equivalent setting could not be measured (quota).
+                config = genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_budget=0)
+                ) if model.startswith("gemini-2.5") else None
+                response = client.models.generate_content(model=model, contents=contents, config=config)
+                text = (response.text or "").strip()
+                if text:
+                    self._last_good = (model, key)
+                    return text
+            except Exception as e:
+                msg = str(e)
+                if "404" in msg or "NOT_FOUND" in msg:
+                    retired.add(model)
+                elif any(code in msg for code in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
+                    # With every pair out of quota, each read spent ~6.5 s collecting nine 429s
+                    # before the OCR fallback. Rest the pair so the next read goes straight there.
+                    self._resting_until[(model, key)] = time.monotonic() + self.QUOTA_REST_S
+                logger.warning("[SCREEN-READER] %s failed (%s); trying the next option.", model, msg[:80])
+        return ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # OCR FALLBACK SUMMARY (used when Gemini is unavailable)
@@ -523,27 +632,30 @@ class ScreenReaderController:
             parts.append(f"The active window is {app_name}.")
 
         # 2. Main text content
-        if ocr_lines:
-            # Try to find heading-like lines (short, capitalized, at the top)
-            headings = [
-                ln for ln in ocr_lines[:8]
-                if len(ln) < 80 and (ln[0].isupper() or ln.isupper())
-                and not any(ch in ln for ch in ["www.", "http", "@"])
-            ]
-            body_lines = [ln for ln in ocr_lines if ln not in headings]
-
-            if headings:
-                heading_text = ". ".join(headings[:3])
-                parts.append(f"Visible headings include: {heading_text}.")
-
-            if body_lines:
-                body_preview = " ".join(body_lines[:6])
-                if len(body_preview) > 300:
-                    body_preview = body_preview[:300].rsplit(" ", 1)[0] + "..."
-                parts.append(f"Visible text reads: {body_preview}.")
-
-            if len(ocr_lines) > 12:
-                parts.append(f"There is additional content below — approximately {len(ocr_lines)} lines total.")
+        # Alerts first, then the screen text in reading order. This used to keep 6 lines /
+        # 300 characters behind a "heading" guess, so an error dialog below a page of text
+        # was never spoken, and a whole email was cut to its first lines.
+        import difflib
+        lines = [ln for ln in ocr_lines  # the title bar is already said above
+                 if difflib.SequenceMatcher(None, ln.lower(), title.lower()).ratio() < 0.85]
+        if lines:
+            alerts = [ln for ln in lines if _ALERT_RE.search(ln)]
+            if alerts:
+                parts.append("Alert: " + " ".join(_sentence(a) for a in alerts[:3]))
+            body = [ln for ln in lines if ln not in alerts]
+            if len(body) > 12:  # say how much there is before reading it
+                parts.append(f"The screen has about {len(body)} lines of text.")
+            spoken, words = [], 0
+            for ln in body:
+                n = len(ln.split())
+                if words + n > self.FALLBACK_MAX_WORDS and spoken:
+                    break
+                spoken.append(_sentence(ln))
+                words += n
+            if spoken:
+                parts.append("The screen reads: " + " ".join(spoken))
+            if len(spoken) < len(body):
+                parts.append(f"There are about {len(body) - len(spoken)} more lines on screen.")
         else:
             parts.append("No readable text was detected on the screen.")
 
@@ -567,11 +679,13 @@ class ScreenReaderController:
 _screen_reader: Optional[ScreenReaderController] = None
 
 
-def get_screen_reader(api_key: Optional[str] = None) -> ScreenReaderController:
+def get_screen_reader(api_key: Optional[str] = None, key_manager: Optional[Any] = None) -> ScreenReaderController:
     """Returns the singleton ScreenReaderController, creating it if needed."""
     global _screen_reader
     if _screen_reader is None:
-        _screen_reader = ScreenReaderController(api_key=api_key)
+        _screen_reader = ScreenReaderController(api_key=api_key, key_manager=key_manager)
     elif api_key and _screen_reader._api_key != api_key:
         _screen_reader.set_api_key(api_key)
+    if key_manager is not None:
+        _screen_reader.key_manager = key_manager
     return _screen_reader
