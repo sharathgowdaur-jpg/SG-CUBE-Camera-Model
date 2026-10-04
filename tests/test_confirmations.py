@@ -42,6 +42,16 @@ class TestYesNo(unittest.TestCase):
         self.intent("what time is it")
         self.assertNotEqual(self.intent("yes"), "AUTOMATION_CONFIRM")
 
+    def test_expiry_is_timed_from_when_the_request_was_created(self):
+        from assistive.automation_manager import AutomationRequest
+        self.ctx.set_pending_automation(AutomationRequest(request_id="r", action_type=AutomationActionType.CLOSE_APP,
+                                                          target="calculator", display_name="Calculator",
+                                                          created_at=5000.0))
+        self.ctx.prune_stale(5000.0 + 89)
+        self.assertIsNotNone(self.ctx.get_pending_automation())
+        self.ctx.prune_stale(5000.0 + 91)
+        self.assertIsNone(self.ctx.get_pending_automation())
+
     def test_pending_expires_after_90_seconds_even_for_dict_pendings(self):
         self.ctx.prune_stale(1000.0 + 89)
         self.assertIsNotNone(self.ctx.get_pending_automation())

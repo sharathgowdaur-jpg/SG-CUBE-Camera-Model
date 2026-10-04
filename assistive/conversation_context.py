@@ -763,7 +763,11 @@ class ConversationContextManager:
     def set_pending_automation(self, request: Any, current_time: Optional[float] = None) -> None:
         with self._lock:
             self.pending_automation = request
-            self.pending_automation_at = current_time if current_time is not None else time.time()
+            # Time the question from when the request was made (AutomationRequest.created_at);
+            # dict pendings (computer-use, destructive intents) have none, so use now.
+            created = getattr(request, "created_at", None)
+            self.pending_automation_at = (current_time if current_time is not None
+                                          else created if isinstance(created, (int, float)) else time.time())
             self.state = ConversationState.AWAITING_CONFIRMATION
             self.active_topic = TopicType.SYSTEM_AUTOMATION
 

@@ -679,9 +679,14 @@ class TestAutomationEdgeCasesAndPolicies(unittest.TestCase):
         self.assertIsNotNone(self.ctx.active_automation)
         self.assertIsNotNone(self.ctx.pending_automation)
 
-        # After TTL expiration
+        # After the 60 s automation-reference TTL: the reference is gone, but an unanswered
+        # confirmation question lives for 90 s (PENDING_CONFIRMATION_TTL), so it is still pending.
         self.ctx.prune_stale(current_time=170.0)
         self.assertIsNone(self.ctx.active_automation)
+        self.assertIsNotNone(self.ctx.pending_automation)
+
+        # After the 90 s confirmation TTL (timed from the request's created_at=100)
+        self.ctx.prune_stale(current_time=200.0)
         self.assertIsNone(self.ctx.pending_automation)
         self.assertEqual(self.ctx.state, ConversationState.IDLE)
 
