@@ -1056,12 +1056,19 @@ class CommandRouter:
         ):
             return {"intent": "OCR", "target": None, "params": {}}
 
+        # 16.4. Questions about what is ON the computer screen must reach the screen reader. The
+        # camera rules below ("what do you see", "can you see ...") used to catch them first, so
+        # "what do you see in this window" ran the camera object finder.
+        if re.search(r"\b(what|tell|describe|read)\b.*\b(on|in)\s+(?:my |the |this )?(screen|window|page|tab|monitor|display)\b", clean_text):
+            return {"intent": "AUTOMATION_READ_SCREEN", "target": None, "params": {}}
+
         # 16.5. Scene Describe Query ("What do you see around me?", "What do you see?", "Describe the scene")
         if any(p in clean_text for p in [
             "what do you see around me", "what can you see around me",
             "what do you see in front of me", "what can you see in front of me",
             "what do you see", "what can you see", "describe the scene", "describe what you see",
-        ]):
+        ]) and not re.search(r"\b(screen|display|monitor|window|page|tab)\b", clean_text):
+            # "what do you see on my screen" is the screen reader, not the camera
             return {"intent": "SCENE_DESCRIBE", "target": None, "params": {"query": text}}
 
         # 17. Environment Query ("What is around me?", "Describe the environment", "Describe my surroundings")
