@@ -372,7 +372,28 @@ class ConversationContextManager:
     DOCUMENT_TTL = 300.0      # 5 minutes
     CLARIFICATION_TTL = 300.0 # 5 minutes
     AUTOMATION_TTL = 60.0     # 1 minute
+    PENDING_CONFIRMATION_TTL = 90.0  # an unanswered "should I?" is dropped after this
     ALERT_TTL = 60.0          # 1 minute
+
+    # An answer must be made ONLY of answer words, with at least one real yes/no in it.
+    # Prefix matching made "yesterday's weather" or "send an email to Bob" CONFIRM
+    # whatever was pending; "yes please do" / "no, cancel that" still work.
+    _YES_WORDS = frozenset("yes yeah yep yup sure ok okay confirm confirmed proceed go ahead do it please send the message that right correct".split())
+    _YES_CORE = frozenset("yes yeah yep yup sure ok okay confirm confirmed proceed ahead do send".split())
+    _NO_WORDS = frozenset("no nope nah cancel stop abort dont do not it that never mind nevermind forget thanks send the message please".split())
+    _NO_CORE = frozenset("no nope nah cancel stop abort dont not never nevermind forget".split())
+
+    @classmethod
+    def classify_confirmation(cls, normalized_text: str) -> Optional[bool]:
+        """True = yes, False = no, None = not an answer (a new command)."""
+        words = set(normalized_text.split())
+        if not words:
+            return None
+        if words <= cls._NO_WORDS and words & cls._NO_CORE:
+            return False
+        if words <= cls._YES_WORDS and words & cls._YES_CORE:
+            return True
+        return None
 
     MAX_TURNS = 10
 
@@ -404,6 +425,7 @@ class ConversationContextManager:
         self.active_media: Optional[ActiveMediaRef] = None
         self.active_note: Optional[Dict[str, Any]] = None
         self.pending_automation: Optional[Any] = None
+        self.pending_automation_at: float = 0.0
         self.pending_clarification: Optional[PendingClarification] = None
 
         self._turn_counter: int = 0
@@ -473,12 +495,9 @@ class ConversationContextManager:
                 self.active_media = None
 
             if self.pending_automation:
-                is_exp = False
-                if hasattr(self.pending_automation, "is_expired"):
-                    is_exp = self.pending_automation.is_expired(self.AUTOMATION_TTL, now)
-                elif hasattr(self.pending_automation, "created_at"):
-                    is_exp = (now - self.pending_automation.created_at) > self.AUTOMATION_TTL
-                if is_exp:
+                # Timed from when it was stored, whatever its type: dict pendings
+                # (computer-use, destructive intents) have no timestamp and never expired.
+                if (now - self.pending_automation_at) > self.PENDING_CONFIRMATION_TTL:
                     self.pending_automation = None
                     if self.state == ConversationState.AWAITING_CONFIRMATION:
                         self.state = ConversationState.TOPIC_ACTIVE if self.recent_turns else ConversationState.IDLE
@@ -744,6 +763,11 @@ class ConversationContextManager:
     def set_pending_automation(self, request: Any, current_time: Optional[float] = None) -> None:
         with self._lock:
             self.pending_automation = request
+            # Time the question from when the request was made (AutomationRequest.created_at);
+            # dict pendings (computer-use, destructive intents) have none, so use now.
+            created = getattr(request, "created_at", None)
+            self.pending_automation_at = (current_time if current_time is not None
+                                          else created if isinstance(created, (int, float)) else time.time())
             self.state = ConversationState.AWAITING_CONFIRMATION
             self.active_topic = TopicType.SYSTEM_AUTOMATION
 
@@ -1076,16 +1100,13 @@ class ConversationContextManager:
         # A.0. Pending Automation Confirmation / Cancellation
         # ---------------------------------------------------------------------
         if self.state == ConversationState.AWAITING_CONFIRMATION or self.pending_automation:
-            is_affirmative = (
-                clean_norm in ["yes", "yes please", "confirm", "do it", "sure", "proceed", "please do", "okay", "ok", "yep", "yeah", "yes do it", "go ahead", "send it", "send", "yes send it", "yes send", "send message", "send the message", "yes send the message"] or
-                any(clean_norm.startswith(p) for p in ["yes", "confirm", "sure", "proceed", "please do", "go ahead", "do it", "send it", "send"]) or
-                any(clean_norm.endswith(p) for p in ["confirm", "proceed", "do it", "please do", "send it", "send"])
-            )
-            is_negative = (
-                clean_norm in ["no", "cancel", "stop", "dont", "dont do it", "do not", "do not do it", "nope", "abort", "no thanks", "no dont", "no don't", "cancel message", "dont send", "dont send it", "do not send"] or
-                any(clean_norm.startswith(p) for p in ["no", "cancel", "stop", "dont", "do not", "abort", "never mind", "dont send"]) or
-                any(clean_norm.endswith(p) for p in ["cancel that", "dont do it", "do not do it", "stop", "cancel message", "dont send it", "dont send"])
-            )
+            answer = self.classify_confirmation(clean_norm)
+            is_affirmative = answer is True
+            is_negative = answer is False
+            if not is_affirmative and not is_negative and self.pending_automation:
+                # Anything else is a new command: drop the question so a stray "yes"
+                # later cannot fire it, and let the new command run normally.
+                self.clear_pending_automation()
 
             if is_affirmative and not is_negative:
                 pending = self.pending_automation

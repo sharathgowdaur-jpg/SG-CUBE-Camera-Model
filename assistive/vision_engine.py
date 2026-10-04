@@ -1139,6 +1139,16 @@ class VisionEngine:
                     self.response_manager.add_response(resp, priority=2, force=True)
                     return resp
 
+        # 4b. Destructive actions always ask first (these deleted data on the first,
+        # possibly misheard, sentence). A clear "yes" within 90 s runs it via AUTOMATION_CONFIRM;
+        # a voice-password replay calls _execute_intent directly and needs no second yes.
+        what = self._destructive_description(intent, route)
+        if what:
+            self.context.set_pending_automation({"destructive_intent": intent, "route": route, "transcript": user_transcript})
+            resp = f"That will permanently {what}. Say yes to confirm, or no to cancel."
+            self.response_manager.add_response(resp, priority=2, force=True)
+            return resp
+
         # 5. Normal Intent Execution
         resp = self._execute_intent(intent, route, user_transcript, session_id=session_id)
         if resp:
@@ -1155,6 +1165,20 @@ class VisionEngine:
             else:
                 self.context.add_turn(user_transcript, resp, intent=intent, topic=self.context.active_topic)
         return resp
+
+    @staticmethod
+    def _destructive_description(intent: str, route: Dict) -> Optional[str]:
+        """What a data-deleting intent will destroy, or None if the intent is not destructive."""
+        p = route.get("params") or {}
+        return {
+            "MEMORY_CLEAR": "delete all your saved memories",
+            "MEMORY_DELETE_CATEGORY": f"delete your saved {p.get('category') or 'category'} memories",
+            "TASK_CLEAR_ALL": "delete all your tasks and reminders",
+            "REMINDER_CLEAR_ALL": "delete all your tasks and reminders",
+            "TASK_DELETE": f"delete the task {p.get('task_name') or 'you named'}",
+            "FACE_FORGET": f"forget {p.get('name') or 'that person'}'s saved face",
+            "FACE_FORGET_ALL": "delete every saved face profile",
+        }.get(str(intent))
 
     def _execute_intent(self, intent: str, route: Dict, user_transcript: str, session_id: Optional[str] = None) -> Optional[str]:
         """
@@ -2264,7 +2288,11 @@ class VisionEngine:
             pending_req = route["params"].get("pending_request") or self.context.get_pending_automation()
             if pending_req:
                 self.context.clear_pending_automation()
-                if isinstance(pending_req, dict) and "goal" in pending_req:
+                if isinstance(pending_req, dict) and "destructive_intent" in pending_req:
+                    # Confirmed data deletion (asked at step 4b)
+                    resp = self._execute_intent(pending_req["destructive_intent"], pending_req["route"],
+                                                pending_req["transcript"], session_id=session_id)
+                elif isinstance(pending_req, dict) and "goal" in pending_req:
                     # Confirmed computer-use action
                     res = self.computer_use.execute_goal(pending_req["goal"], confirmed=True)
                     resp = res.spoken_summary
