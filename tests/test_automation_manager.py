@@ -342,7 +342,11 @@ class TestAutomationSecurityIntegration(unittest.TestCase):
         self.assertEqual(res.status, AutomationResultStatus.REQUIRES_SECURITY_AUTH)
         self.assertIn("Voice Security Password", res.spoken_response)
 
-    def test_authorized_session_bypasses_security_challenge(self):
+    # The close itself is mocked: this test is about the security bypass. It ran a real
+    # `taskkill` (closing the developer's Calculator if open) and only passed because closing
+    # used to report SUCCESS even when nothing was running.
+    @patch("subprocess.run", return_value=MagicMock(returncode=0))
+    def test_authorized_session_bypasses_security_challenge(self, _mock_run):
         ok, msg, rc = self.sec.set_password("open sesame river")
         self.assertTrue(ok)
         self.sec.authorize_session(60.0)
@@ -839,10 +843,15 @@ class TestUIAutomationAndWhatsApp(unittest.TestCase):
         self.assertIn("You are viewing Wikipedia - Artificial Intelligence", res["spoken_response"])
         self.assertIn("Artificial intelligence is the intelligence of machines", res["spoken_response"])
 
-    def test_open_chat_with_contact(self):
+    @patch("os.startfile", create=True)
+    def test_open_chat_with_contact(self, mock_start):
+        self.ui._mock_active_window = {"is_locked": False}  # never read the real foreground window
         ok, msg = self.ui.open_chat_with("Mom")
         self.assertTrue(ok)
-        self.assertEqual(msg, "Opened chat with Mom.")
+        mock_start.assert_called_once_with("whatsapp:")
+        # No contacts store: it must not claim the chat itself was opened.
+        self.assertNotIn("Opened chat with Mom", msg)
+        self.assertIn("Mom", msg)
 
     def test_open_chat_locked_error(self):
         self.ui._mock_whatsapp_state = WhatsAppScreenState(
@@ -853,16 +862,20 @@ class TestUIAutomationAndWhatsApp(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("WhatsApp is locked", msg)
 
-    def test_whatsapp_message_send_flow(self):
+    @patch("webbrowser.open", return_value=True)
+    def test_whatsapp_message_send_flow(self, mock_open):
+        self.ui._mock_active_window = {"is_locked": False}  # never read the real foreground window
         # 1. Draft preparation
         draft = self.ui.prepare_send_message("Mom", "I will be late")
         self.assertEqual(draft["status"], "REQUIRES_CONFIRMATION")
-        self.assertEqual(draft["spoken_response"], "Ready to send 'I will be late' to Mom. Should I send it?")
+        self.assertIn("I will be late", draft["spoken_response"])
 
-        # 2. Confirmed send
+        # 2. Confirmed: opens WhatsApp's share link with the text; it does NOT send.
         ok, send_msg = self.ui.confirm_send_message("Mom", "I will be late")
         self.assertTrue(ok)
-        self.assertEqual(send_msg, "Message sent to Mom.")
+        mock_open.assert_called_once_with("https://wa.me/?text=I%20will%20be%20late")
+        self.assertNotIn("sent to Mom", send_msg)
+        self.assertIn("haven't sent", send_msg)
 
         # 3. Cancel
         cancel_msg = self.ui.cancel_send_message()
@@ -958,21 +971,25 @@ class TestUIAutomationAndWhatsApp(unittest.TestCase):
             if hasattr(engine, "scheduler"):
                 engine.scheduler.stop()
 
-    def test_vision_engine_whatsapp_send_confirmation_e2e(self):
+    @patch("webbrowser.open", return_value=True)
+    def test_vision_engine_whatsapp_send_confirmation_e2e(self, mock_open):
         engine = VisionEngine(data_dir=self.temp_dir)
+        engine.automation.ui_automation._mock_active_window = {"is_locked": False}  # never read the real window
         try:
             # 1. User says "Send I will be late to Mom"
             resp1 = engine.process_user_speech_query("Send I will be late to Mom")
-            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp1)
+            self.assertIn("'I will be late' ready for Mom", resp1)
             self.assertEqual(engine.context.state, ConversationState.AWAITING_CONFIRMATION)
 
-            # 2. User confirms with "Send it"
+            # 2. User confirms with "Send it": WhatsApp opens with the text; nothing is sent for them.
             resp2 = engine.process_user_speech_query("Send it")
-            self.assertIn("Message sent to Mom.", resp2)
+            mock_open.assert_called_once_with("https://wa.me/?text=I%20will%20be%20late")
+            self.assertIn("haven't sent it", resp2)
+            self.assertNotIn("Message sent", resp2)
 
             # 3. Test cancellation flow
             resp3 = engine.process_user_speech_query("Send I will be late to Mom")
-            self.assertIn("Ready to send 'I will be late' to Mom. Should I send it?", resp3)
+            self.assertIn("'I will be late' ready for Mom", resp3)
             resp4 = engine.process_user_speech_query("Cancel message")
             self.assertIn("Message cancelled.", resp4)
         finally:

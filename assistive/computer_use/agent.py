@@ -306,7 +306,16 @@ class ComputerUseAgent:
                 )
                 step_logs.append(log_entry)
 
-                # Bounded: Single action goals finish here
+                # Bounded: Single action goals finish here. The screen check decides what is
+                # said: a click that changed nothing used to be reported as "Action completed".
+                if not v_res.verified:
+                    return AgentTaskResult(
+                        success=False,
+                        goal=goal,
+                        total_steps=step_num,
+                        spoken_summary=f"I tried to {action_type} {target_desc}, but I couldn't confirm it worked. {v_res.details}",
+                        step_logs=step_logs
+                    )
                 return AgentTaskResult(
                     success=True,
                     goal=goal,
