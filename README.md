@@ -2,7 +2,7 @@
 
 # 🧊 SG CUBE 2.5
 
-### *Next-Generation Multimodal AI Companion & Assistive Vision System*
+### *Windows Voice-First Personal AI & Assistive AI System*
 
 <p align="center">
 
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-A real-time, privacy-first multimodal AI vision companion and assistive operating system designed primarily for visually impaired and blind users, providing deep environmental awareness, continuous contextual dialogue, intelligent document reading, and secure voice automation.
+A Windows voice-first Personal AI and Assistive AI system that combines natural voice interaction, computer automation, real-time camera/vision assistance, screen understanding, security controls, and system-level actions.
 </p>
 
 <br>
@@ -21,7 +21,7 @@ A real-time, privacy-first multimodal AI vision companion and assistive operatin
 [![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
-[![Tests](https://img.shields.io/badge/Tests-1465%20Passed%20(100%25)-00ff88?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-Targeted%20Regression%20Passed-00ff88?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe?style=for-the-badge)](LICENSE)
 
 <br>
@@ -30,14 +30,17 @@ A real-time, privacy-first multimodal AI vision companion and assistive operatin
 
 <br>
 
-[✨ 10 Core Features](#-sg-cube-25--10-core-features) •
-[💬 What SG CUBE Can Do](#-what-sg-cube-can-do) •
+[✨ Overview](#-overview) •
+[🤖 Capabilities](#-sg-cube--personal-ai) •
+[📱 Applications](#-applications) •
+[⚡ Advantages](#-advantages) •
+[⚠️ Limitations](#-limitations) •
+[🔄 Sleep & Wake](#-sleep-and-wake-lifecycle) •
 [🛡️ Privacy & Security](#️-privacy--security-architecture) •
-[⚠️ Hardware Limitations](#️-hardware-and-depth-perception-notice) •
 [🏗️ Architecture](#️-system-architecture) •
 [🚀 Installation](#-installation) •
 [🧪 Verification](#-testing--verification) •
-[👥 Team](#-team--contributors) •
+[👥 Team](#-team--authors) •
 [📜 License](#-license)
 
 </div>
@@ -46,128 +49,131 @@ A real-time, privacy-first multimodal AI vision companion and assistive operatin
 
 # 🌌 Overview
 
-**SG CUBE 2.5** is an intelligent, real-time multimodal AI vision companion and assistive system that brings together **real-time computer vision, continuous contextual conversation, explicit personal memory, environmental scene analysis, document understanding, and permission-based system automation**.
+**SG CUBE 2.5** is an intelligent, real-time multimodal AI vision companion and assistive system designed for **accessibility, blind and low-vision autonomy, hands-free productivity, privacy, and safety**.
 
-Designed from the ground up for **accessibility, blind and low-vision autonomy, privacy, and safety**, SG CUBE provides intuitive spatial awareness and proactive assistance without requiring visual screens or complex navigation.
-
----
-
-# ✨ SG CUBE 2.5 — 10 Core Features
-
-### 🔐 1. Voice Security & Password Protection
-* **Cryptographic Passphrase Authentication:** Zero plaintext storage using PBKDF2-HMAC-SHA256 (100,000 iterations) with salted hashing and DPAPI-encrypted storage.
-* **Three-Tier Policy Model:** Operations categorized into `SAFE`, `PROTECTED` (single-item deletion, memory recall), and `HIGH_RISK` (mass clearing, credential removal).
-* **Two-Factor Authentication (2FA):** High-risk actions enforce 2FA combining the spoken knowledge passphrase with verified live facial recognition from OpenCV SFace.
-* **Progressive Lockout & Emergency Recovery:** Strict brute-force rate-limiting and one-time emergency recovery codes.
-
-### 🧠 2. Personal Context Memory
-* **Explicit Voice Memory Storage:** Users explicitly store facts, locations, and preferences (`"Remember my keys are on the entryway table"`).
-* **High-Performance Hierarchical Retrieval:** In-RAM LRU cache (< 0.001 ms), exact SQL indexed lookups (< 0.1 ms), and SQLite FTS5 full-text keyword matching (< 0.3 ms).
-* **Automatic Categorization:** Classifies facts into structured categories (`location`, `preference`, `object`, `contact`, `task`, `routine`).
-* **Zero Accidental Persistence:** Passive chit-chat is never written to disk without explicit user intent.
-
-### 🧭 3. 2D Scene Understanding & Spatial Grounding
-* **Spatial Relationship Engine:** Deterministic pairwise geometric reasoning identifying `ON`, `UNDER`, `INSIDE`, `NEAR`, `FAR`, `LEFT_OF`, `RIGHT_OF`, `ABOVE`, `BELOW`.
-* **Surface-Grounding & Object Association:** Groups items by physical support structures (`"on the desk"`, `"on the dining table"`).
-* **Truthful Image-Space Positioning:** Describes objects relative to user camera view (`"on your left"`, `"directly ahead"`, `"on your right"`).
-
-### 🔍 4. Smart Lost-Item Finder
-* **5-Stage Hierarchical Search:** Evaluates live camera frame → recent visual sighting buffer (120s TTL) → personal memory database → color filtering → honest missing fallback.
-* **Transient Observation Tracking:** Stores recent sightings in volatile memory with automatic time-decay and distance estimation.
-* **Anti-Hallucination Guarantee:** Never guesses unseen object locations; clearly distinguishes between currently visible items and past sightings.
-
-### 📅 5. Task & Reminder Assistant
-* **Natural Language Scheduling:** Parses relative offsets (`"in 20 minutes"`), explicit times (`"at 6:30 PM"`), calendar dates, and recurrence (`daily`, `weekdays`, `every Monday`).
-* **Background Scheduler:** Non-blocking 1.0s interval checker with audio chime and non-overlapping voice dispatch.
-* **Missed Reminder Recovery:** Automatically detects and alerts users to reminders that matured while the system was offline.
-
-### 💬 6. Continuous Conversation Context
-* **Lightweight In-RAM Multi-Turn Tracking:** Maintains transient context across turns without disk persistence.
-* **Deterministic Deictic Resolution:** Resolves pronouns (*"it"*, *"that"*, *"there"*, *"the other one"*) to the active object, person, task, or document.
-* **Ambiguity Clarification:** Detects underspecified commands and asks targeted clarification questions before taking action.
-
-### 👥 7. Multi-Person Awareness & Tracking
-* **Real-Time Track Association:** Multi-person centroid/IoU tracking over RGB camera streams with entry and exit detection.
-* **Strict 5-Condition Identity Privacy Gate:** Discloses enrolled names ONLY when:
-  1. `state == KNOWN`
-  2. `is_confirmed == True` (3 of 5 verification frames)
-  3. `liveness_ok == True`
-  4. `quality_ok == True`
-  5. `identity_name != "Unknown"`
-  *(All other persons are announced neutrally as "a person").*
-* **Multi-Person Querying:** Answers questions like *"How many people are here?"*, *"Where is everyone?"*, and *"Did someone leave?"*.
-
-### 📄 8. Intelligent Document Understanding
-* **Automatic Document Boundary Detection:** Edge detection, perspective rectification, and quality assessment (blur and low-light rejection).
-* **Structured Layout Parsing:** Reconstructs reading order across titles, headings, paragraphs, key-value pairs, lists, and tabular rows.
-* **Targeted Document Queries:** Answers specific questions (*"Read this document"*, *"What is the total?"*, *"What is the date?"*, *"Read the table"*).
-* **Automated PII Redaction:** Masks payment card numbers, Indian Aadhaar numbers, PAN cards, OTPs, and private credentials.
-
-### ⚡ 9. Permission-Based System Automation
-* **Strict Allowlist-Only Registry:** Zero support for arbitrary shell, command-line scripts, PowerShell, or `eval`.
-* **Safe Application Actions:** Opens/closes approved tools (Calculator, Notepad, File Explorer, Web Browser) and navigates to approved domains.
-* **Granular Permissions & Confirmation:** User-configurable permissions (`ALLOWED`, `ASK_EACH_TIME`, `DENIED`) with voice confirmation for protected actions.
-* **Document OCR Isolation:** Text extracted from camera documents cannot execute system automation commands.
-
-### 🚨 10. Proactive Assistive Alerts
-* **Conservative Temporal Stability:** Requires visual events to persist for 3 of 5 frames ($\ge 0.70$ confidence) before triggering an alert.
-* **Fatigue Protection & Rate Limiting:** Global rate limit (maximum 5 spoken alerts per minute) and per-event deduplication cooldowns (15s–60s).
-* **User Control & Verbosity Modes:** Configurable modes (`OFF`, `MINIMAL`, `NORMAL`, `ASSISTIVE`) with natural voice pause/resume controls (`"pause alerts for 5 minutes"`).
+The system unifies real-time computer vision, continuous contextual conversation, explicit personal memory, environmental scene analysis, document understanding, and permission-based Windows system automation into a single cohesive assistant that can be operated entirely by voice or visually through a modern interface.
 
 ---
 
-# 💬 What SG CUBE Can Do
+# 🤖 SG CUBE – Personal AI
 
-### 📍 Finding Everyday Items
-> **User:** *"Where is my phone?"*  
-> **SG CUBE:** *"Your phone is on the dining table, slightly to your left."*  
-> **User:** *"Where is it?"* *(Context Follow-Up)*  
-> **SG CUBE:** *"Your phone is on the dining table, slightly to your left."*  
-> **User:** *"What is next to it?"*  
-> **SG CUBE:** *"There is a cup on the dining table, to the left of the phone."*
+SG CUBE is a Windows voice-first Personal AI and Assistive AI system that combines natural voice interaction, computer automation, real-time camera/vision assistance, screen understanding, security controls, and system-level actions.
 
-### 📄 Reading Documents & Receipts
-> **User:** *"Read this document."*  
-> **SG CUBE:** *"This is a receipt titled 'Grocery Mart', dated 2026-09-22, with a total of $45.00."*  
-> **User:** *"What is the total?"*  
-> **SG CUBE:** *"The total amount is $45.00."*
-
-### ⏰ Scheduling Tasks & Reminders
-> **User:** *"Remind me to call Mom at 6 PM."*  
-> **SG CUBE:** *"I've scheduled a reminder to 'Call Mom' for today at 6:00 PM."*  
-> **User:** *"Change it to 7 PM."*  
-> **SG CUBE:** *"I've updated your reminder 'Call Mom' to 7:00 PM."*
-
-### 👥 People & Room Awareness
-> **User:** *"Who is in front of me?"*  
-> **SG CUBE:** *"There is a person standing directly ahead of you."*  
-> *(When a verified enrolled friend enters the camera view)*  
-> **SG CUBE:** *"Rahul is to your right."*
-
-### 🖥️ Safe System Automation
-> **User:** *"Open Calculator."*  
-> **SG CUBE:** *"Opening Calculator."*  
-> **User:** *"Close it."*  
-> **SG CUBE:** *"Do you want me to close Calculator?"*  
-> **User:** *"Yes."*  
-> **SG CUBE:** *"Calculator has been closed."*
-
-### 🚨 Proactive Assistive Warnings
-> *(A chair is obstructing the walkway directly ahead)*  
-> **SG CUBE:** *"Caution: chair in the center of camera view."*  
-> **User:** *"What was that alert?"*  
-> **SG CUBE:** *"The last alert was 10 seconds ago: 'Caution: chair in the center of camera view' based on scene analyzer."*
+### 🌟 Major Capabilities
+* **Wake-Word Activation:** Low-power wake detection on `"SG CUBE"` or `"Hey SG CUBE"`.
+* **Continuous Voice Conversation:** Context-aware multi-turn dialogue with natural turn-taking.
+* **Gemini Live Integration:** Low-latency multimodal reasoning over voice, images, and camera frames.
+* **Windows System Automation:** Allowlisted application control, process dispatch, and window focus management.
+* **Mouse and Keyboard Control:** Precise voice-guided cursor positioning, click actions, and keystroke dispatch.
+* **Application Launching:** Safe launching and closing of desktop tools (Calculator, Notepad, Browser, Explorer).
+* **Notepad Interaction:** Opening, reading, appending, typing, and editing text inside Notepad hands-free.
+* **Settings / Wi-Fi / Bluetooth Control:** Checking network statuses and navigating system settings menus.
+* **Volume / Brightness Control:** Adjusting audio playback volume and display brightness levels.
+* **Web Search / YouTube:** Spoken search querying and instant YouTube video playback.
+* **Screenshot and Screen Understanding:** Live screen capture analysis to inspect what is currently displayed.
+* **Camera-Based Vision:** Real-time monocular DirectShow video capture and assistive stream processing.
+* **Face Detection and Recognition:** Deep neural face detection (OpenCV YuNet) and feature embedding (SFace).
+* **Object / Vision Assistance:** Identifying objects, reading spatial positions, and tracking visual sightings.
+* **Color Recognition:** Identifying dominant colors of objects held up to the camera.
+* **Optical Character Recognition (OCR):** Local document boundary detection, perspective alignment, and reading.
+* **Spatial / Safety Awareness:** 2D image-space geometric reasoning and proximity alerts for nearby obstacles.
+* **Personal Memory:** Persistent, structured memory storage (`location`, `preference`, `routine`) with FTS5 keyword retrieval.
+* **Tasks & Alarms:** Natural language scheduling, recurring reminders, and background notification dispatch.
+* **Secure Vault:** Salted PBKDF2-HMAC-SHA256 password vault with DPAPI hardware-bound storage.
+* **Voice Authentication:** Multi-tier authorization policy with optional face recognition 2FA for protected commands.
+* **Sleep / Wake Lifecycle:** In-process dormant standby mode with single-instance IPC coordination.
+* **Single-Instance Protection:** Mutex and socket port guards preventing duplicate instances or conflicting audio devices.
 
 ---
 
-# ⚠️ Hardware and Depth Perception Notice
+# 📱 Applications
 
-> [!IMPORTANT]
-> **RGB Camera & Spatial Perception Characteristics:**
-> * SG CUBE operates using standard **2D monocular RGB webcams and camera streams**.
-> * The system performs **2D image-space geometric reasoning** and scale-based proximity heuristics. It does **not** contain hardware LiDAR, time-of-flight (ToF) sensors, or millimeter-wave radar.
-> * SG CUBE **cannot detect physical objects located behind the user** or outside the camera's active field of view.
-> * Spatial directions (*"on your left"*, *"directly ahead"*, *"on your right"*) describe the orientation of objects within the **camera's visual coordinate space**.
+1. **Personal AI Assistant**
+   Acts as a hands-free desktop companion for setting reminders, managing personal notes, conducting web searches, launching applications, controlling media, and retrieving information through natural conversation.
+
+2. **Assistive Technology for Visually Impaired Users**
+   Empowers blind and low-vision individuals with live auditory scene descriptions, real-time obstacle notices, document and receipt reading, color recognition, and lost-object locating.
+
+3. **Hands-Free Computer Control**
+   Enables users with motor impairments or those working in hands-busy environments to execute Windows system actions, type notes, manage audio volume, and navigate desktop workflows entirely using voice.
+
+4. **Smart Security and Authentication**
+   Protects sensitive commands, credentials, and memory records using spoken passphrases paired with biometric facial verification.
+
+5. **Real-Time Environment and Screen Assistance**
+   Bridges physical and digital domains by allowing users to ask questions simultaneously about what is in front of their webcam and what is currently rendered on their computer screen.
+
+---
+
+# ⚡ Advantages
+
+1. **Dual-Mode Assistance**
+   Seamlessly integrates digital desktop management with physical world camera assistance in a unified runtime.
+
+2. **Voice-First Interaction**
+   Built from the ground up for hands-free operation with natural wake-word detection, continuous speech recognition, and proactive voice responses.
+
+3. **Real-Time Vision Assistance**
+   Combines ultra-fast local neural models (YuNet and SFace) for instant detection with cloud multimodal models for deep semantic reasoning.
+
+4. **Local + Cloud Intelligence**
+   Stores sensitive personal memories, face models, and credentials locally in encrypted databases while leveraging Google Gemini Live for complex reasoning.
+
+5. **Security-Focused Automation**
+   Enforces a strict allowlist policy, deny-by-default execution boundaries, and hardware-bound encryption to prevent unintended system actions.
+
+---
+
+# ⚠️ Limitations
+
+1. **Internet Dependency for Cloud AI Features**
+   Google Gemini Live reasoning and cloud multimodal queries require an active internet connection. Basic offline fallback handles local rule-based commands.
+
+2. **Windows 10/11 Platform Dependency**
+   The application leverages Windows APIs (DirectShow, DPAPI, Win32 GUI, WASAPI) and is designed specifically for 64-bit Windows environments.
+
+3. **Limited Regional-Language Support**
+   While English is fully supported, regional-language support (such as Kannada and Hindi) is currently experimental with limited phonetic dictionaries and vocabulary.
+
+4. **Hardware Performance Dependency**
+   Accuracy and latency depend on the user's physical microphone clarity, monocular camera resolution/framerate, and host CPU/GPU capabilities.
+
+5. **Environmental Variability**
+   Speech recognition, optical character recognition, and vision detection accuracy may degrade under poor lighting conditions, high acoustic background noise, or extreme camera angles.
+
+---
+
+# 🔄 Sleep and Wake Lifecycle
+
+SG CUBE can enter a dormant sleep state without terminating the main application process, allowing instantaneous wake-up while conserving system resources.
+
+```
+Wake / Listening
+      ↓
+"Go to Sleep"
+      ↓
+GUI Hidden / Minimized
+      ↓
+Camera & AI Resources Released
+      ↓
+Wake Listener Remains Active on Port 49153
+      ↓
+"SG CUBE" Detected
+      ↓
+IPC Wake Signal to Port 49152
+      ↓
+GUI Restored
+      ↓
+Camera, AI & Microphone Re-initialized
+      ↓
+LISTENING
+```
+
+### Key Lifecycle Guarantees:
+* **In-Process Standby:** The main GUI process remains alive in a lightweight dormant state, keeping IPC port `49152` bound to accept immediate wake commands.
+* **Hardware Resource Deallocation:** Monocular camera capture streams and Gemini Live WebSocket connections are cleanly closed during sleep to eliminate CPU, GPU, and bandwidth overhead.
+* **Single-Instance IPC Coordination:** Dedicated socket locks ensure that duplicate application instances cannot start simultaneously.
+* **Audio Ownership Protection:** A transition guard prevents the background wake listener from reopening its microphone stream prematurely while the main application is reinitializing its audio pipeline.
 
 ---
 
@@ -304,36 +310,28 @@ GEMINI_API_KEY_3=your_tertiary_api_key_optional
 ```cmd
 run.bat
 ```
-*(Or say **"Hey SG CUBE"** if the background wake listener is active).*
+*(Or say **"SG CUBE"** if the background wake listener is active).*
 
 ---
 
 # 🧪 Testing & Verification
 
-Run the full regression test suite across all 10 features:
+The core application subsystems and lifecycle routines are rigorously tested using automated unit and integration suites alongside real-world hardware verification.
 
+### Target Regression & Hardware Verification Highlights
+* **Targeted Regression Suite:** **44 / 44 tests passed** across sleep/wake lifecycle, wake IPC handoff, background listener lifecycle, camera service, single-instance mutex, greetings, and protected response routing.
+* **Physical Microphone Acceptance:** Tested with real WASAPI input hardware verifying PCM capture streams, speech recognition input, and RMS level stability.
+* **Physical Camera Acceptance:** Verified DirectShow device index initialization, frame capture integrity, and YuNet/SFace neural pipeline execution.
+* **Sleep/Wake Cycles:** 3 complete end-to-end sleep and wake cycles passed consecutively with full state transitions (`LISTENING` ➔ `SLEEPING` ➔ `LISTENING`).
+* **Resource Restoration:** Camera and Gemini Live AI services reliably restart upon waking.
+* **Audio Arbitrator Handoff:** Microphone ownership handoff validated between background listener and main GUI with zero contention.
+* **Single-Instance Integrity:** Verified socket lock enforcement on IPC ports `49152`, `49153`, and `49154`.
+* **Zero Audio Duplication:** Speech synthesis queues and audio channels confirmed collision-free.
+
+To run the targeted lifecycle and hardware regression tests:
 ```bash
-pytest tests/ -v
+pytest tests/test_sleep_wake_lifecycle.py tests/test_wake_ipc_handoff.py tests/test_background_listener_lifecycle_master.py tests/test_camera_service.py tests/test_single_instance.py tests/test_sleep_wake_greetings.py tests/test_protected_response_routing.py -v
 ```
-
-### Full Subsystem Verification Matrix
- 
-| Subsystem / Feature Module | Dedicated Test Module | Tests | Result |
-| :--- | :--- | :---: | :---: |
-| **Feature 1: Voice Security** | `test_voice_security_password.py` | 35 | ✅ PASS |
-| **Feature 2: Personal Memory** | `test_context_memory.py`, `test_memory_manager.py` | 33 | ✅ PASS |
-| **Feature 3: Scene Understanding** | `test_scene_understanding.py` | 35 | ✅ PASS |
-| **Feature 4: Lost-Item Finder** | `test_smart_object_finder.py` | 35 | ✅ PASS |
-| **Feature 5: Tasks & Reminders** | `test_task_reminder.py` | 42 | ✅ PASS |
-| **Feature 6: Conversation Context** | `test_conversation_context.py` | 42 | ✅ PASS |
-| **Feature 7: Multi-Person Awareness** | `test_multi_person_awareness.py` | 36 | ✅ PASS |
-| **Feature 8: Document Understanding** | `test_document_understanding.py` | 39 | ✅ PASS |
-| **Feature 9: System & GUI Automation** | `test_automation_manager.py`, `test_notepad_*.py`, `test_mouse_*.py` | 96 | ✅ PASS |
-| **Feature 10: Proactive Alerts** | `test_proactive_alerts.py` | 57 | ✅ PASS |
-| **Audio & Voice Pipeline (WASAPI + Puck)** | `test_single_voice.py`, `test_audio_input_manager.py` | 13 | ✅ PASS |
-| **Deep QA & Persistence Integration** | `qa_deep_test.py`, `test_ultimate_28_step_session.py` | 77 | ✅ PASS |
-| **Core Perception, Vision & Lifecycle** | `test_face_*.py`, `test_wake_*.py`, `test_camera_*.py`, etc. | 925 | ✅ PASS |
-| **TOTAL REGRESSION SUITE** | **All 96 Test Suites Combined** | **1,465** | **✅ 1,465 / 1,465 PASS (100%)** |
 
 ---
 
@@ -361,9 +359,11 @@ pytest tests/ -v
 ### 🤝 Contributors
 * **Gajanand V Dhayagode** ([@gajanand27-05](https://github.com/gajanand27-05)) — Windows DPAPI hardware-bound security enhancements and dependencies hardening
 
-### 👥 Team Members
-* **Ganesh Bukka** ([@Ganu39](https://github.com/Ganu39)) — Provided valuable suggestions, ideas, feedback, and overall project support.
-* * **Gangadhara C** ([@gangadharac](https://github.com/gangadharac)) — Provided valuable suggestions, ideas, feedback, and overall project support.
+### 🤝 Team Support & Acknowledgments
+Special thanks to our teammates and collaborators for their valuable suggestions, ideas, feedback, testing support, and encouragement throughout the development of SG CUBE:
+* **Ganesh Bukka** ([@Ganu39](https://github.com/Ganu39)) — Provided valuable suggestions, ideas, feedback, and testing support.
+* **Gangadhara C** ([@gangadharac](https://github.com/gangadharac)) — Provided valuable suggestions, ideas, feedback, and overall project support.
+
 ---
 
 # 📜 License

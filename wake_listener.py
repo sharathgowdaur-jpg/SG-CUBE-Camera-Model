@@ -346,6 +346,8 @@ class SGCubeWakeListener:
         while self.running:
             if self.listening_paused:
                 time.sleep(0.3)
+                if time.time() - self.last_wake_trigger_time < 3.0:
+                    continue
                 state = self.get_visionclaw_state()
                 if state in ("CLOSED", "SLEEPING"):
                     self.listening_paused = False

@@ -5326,9 +5326,6 @@ class SGCubeApp:
 
 
                         print("[IPC-SERVER] Received WAKE signal! Bringing SG CUBE to foreground...")
-
-
-
                         self.gui_queue.put(("ACTION", "WAKE_FOREGROUND"))
 
 
@@ -12479,54 +12476,46 @@ class SGCubeApp:
 
 
 
-        # In test environments, avoid spawning background daemon or hard exiting
-        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("SGCUBE_TEST_MODE") or getattr(self, '_is_test_mode', False))
-        if is_test:
-            self._shutting_down = False
-            self._sleep_shutdown = False
-            return
+        # Hide / minimize GUI window while dormant
+        try:
+            if getattr(self, 'web_mode', False):
+                if os.name == 'nt':
+                    try:
+                        import win32gui, win32con
+                        hwnd = win32gui.FindWindow(None, "SG CUBE — Personal AI Companion")
+                        if hwnd:
+                            win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+                    except Exception:
+                        pass
+            else:
+                if self.root and self.root.winfo_exists():
+                    self.root.withdraw()
+                    print("[SLEEP] SG CUBE main window hidden/withdrawn.")
+        except Exception as e:
+            print(f"[SLEEP] Error hiding GUI window: {e}")
 
-        # 1. Cancel ALL scheduled Tkinter after callbacks NOW
+        # Cancel scheduled Tkinter after callbacks (animations/polling)
         self._cancel_all_after_callbacks()
 
-        # 2. Ensure wake listener is running & notify to resume
-        try:
-            self._ensure_wake_listener_running()
-            self._notify_wake_listener_resume()
-        except Exception as e:
-            print(f"[SLEEP] Error alerting wake listener: {e}")
-
-        # 3. Release single-instance port lock so fresh GUI can bind upon wake
-        self._close_ipc_server()
-
-        # 4. Clean destruction on main GUI thread
-        def _do_gui_teardown():
-            self._gui_destroyed = True
+        # In test environments, avoid spawning background daemon
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("SGCUBE_TEST_MODE") or getattr(self, '_is_test_mode', False))
+        if not is_test:
+            # Ensure wake listener is running & notify to resume standby listening
             try:
-                if self.root and self.root.winfo_exists():
-                    self.root.destroy()
+                self._ensure_wake_listener_running()
+                self._notify_wake_listener_resume()
+            except Exception as e:
+                print(f"[SLEEP] Error alerting wake listener: {e}")
+
+        # Reset shutdown flags so the dormant app remains ready to wake
+        self._shutting_down = False
+        self._sleep_shutdown = False
+        if self.root and not getattr(self, '_is_closing', False):
+            try:
+                self._queue_after_id = self.safe_after(100, self._process_gui_queue)
             except Exception:
                 pass
-            print("[SLEEP] SG CUBE process cleanly terminated. Port 49152 released.")
-            os._exit(0)
-
-        # Fallback watchdog thread to guarantee process exit
-        def _watchdog():
-            time.sleep(1.2)
-            try:
-                self._close_ipc_server()
-            except Exception:
-                pass
-            os._exit(0)
-        threading.Thread(target=_watchdog, daemon=True).start()
-
-        try:
-            if self.root and self.root.winfo_exists():
-                self.root.after(0, _do_gui_teardown)
-            else:
-                _do_gui_teardown()
-        except Exception:
-            _do_gui_teardown()
+        print("[SLEEP] SG CUBE dormant in background. IPC Port 49152 active.")
 
 
 
@@ -12558,7 +12547,7 @@ class SGCubeApp:
 
 
 
-            res = sock.connect_ex(('127.0.0.1', 49154))  # listener lock socket
+            res = sock.connect_ex(('127.0.0.1', IPC_PORT_WAKE_LISTENER))  # probe wake listener IPC listening socket (port 49153)
 
 
 
@@ -12889,51 +12878,29 @@ class SGCubeApp:
                             win32gui.SetForegroundWindow(hwnd)
                     except Exception:
                         pass
-                return
-
-            self.root.deiconify()
-
-            self.root.lift()
-
-            self.root.focus_force()
-
-
-
-
-
-
-
-            if os.name == 'nt':
-
-
-
-                try:
-
-
-
-                    import win32gui, win32con
-
-
-
-                    hwnd = int(self.root.wm_frame(), 16)
-
-
-
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-
-
-
-                    win32gui.SetForegroundWindow(hwnd)
-
-
-
-                except Exception:
-
-
-
-                    pass
-
-
+            else:
+                def _restore_tk():
+                    try:
+                        self.root.deiconify()
+                        self.root.lift()
+                        self.root.focus_force()
+                    except Exception:
+                        pass
+                if threading.current_thread() is threading.main_thread():
+                    _restore_tk()
+                else:
+                    try:
+                        self.root.after(0, _restore_tk)
+                    except Exception:
+                        _restore_tk()
+                if os.name == 'nt':
+                    try:
+                        import win32gui, win32con
+                        hwnd = int(self.root.wm_frame(), 16)
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        win32gui.SetForegroundWindow(hwnd)
+                    except Exception:
+                        pass
 
             print("[WAKE] application visible")
 
@@ -13044,6 +13011,11 @@ class SGCubeApp:
 
 
             self.first_valid_frame_received = False
+        self._animations_enabled = True
+        if hasattr(self, '_process_gui_queue') and not getattr(self, '_queue_after_id', None):
+            self._queue_after_id = self.safe_after(20, self._process_gui_queue)
+        if hasattr(self, '_animate_sg_cube_core') and not getattr(self, '_cube_after_id', None):
+            self._cube_after_id = self.safe_after(35, self._animate_sg_cube_core)
 
 
 
