@@ -49,7 +49,9 @@ ROOT_FILES_TO_SYNC = [
     "SG-CUBE.exe",
     "SG-CUBE-Wake-Listener.exe",
     "build_desktop_app.bat",
-    "Create-Desktop-Shortcut.bat"
+    "Create-Desktop-Shortcut.bat",
+    "run_wake_listener_silent.vbs",
+    "Install-SG-CUBE.bat"
 ]
 
 # Ignore patterns during copy
