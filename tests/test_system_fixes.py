@@ -8,6 +8,8 @@ Tests for System Fixes & Hands-Free Enhancements:
 """
 
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
