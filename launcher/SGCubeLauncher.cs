@@ -200,8 +200,9 @@ namespace SGCubeLauncher
                 GetWindowText(hWnd, builder, builder.Capacity);
                 string title = builder.ToString();
 
-                if (title.IndexOf("SG CUBE", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    title.IndexOf("VisionClaw", StringComparison.OrdinalIgnoreCase) >= 0)
+                if ((title.IndexOf("SG CUBE", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     title.IndexOf("VisionClaw", StringComparison.OrdinalIgnoreCase) >= 0) &&
+                    title.IndexOf("Backend Engine", StringComparison.OrdinalIgnoreCase) < 0)
                 {
                     _foundWindow = hWnd;
                     return false; // Stop enumeration

@@ -286,18 +286,29 @@ class SGCubeWakeListener:
         print("[MIC_OWNER] HOTWORD RELEASED")
         self.listening_paused = True
 
+        # Check if existing SG CUBE instance is active or sleeping on port 49152
         if self.is_visionclaw_running():
-            print("[SINGLE-INSTANCE] Active SG CUBE instance detected on port 49152. Sending WAKE IPC.")
-            self.send_ipc_signal("WAKE")
-            print("[MIC_OWNER] MAIN ACTIVE")
-            print("[WAKE] APPLICATION READY")
-            self.activation_in_progress = False
-            return
+            print(f"[SINGLE-INSTANCE] Active SG CUBE instance detected on port {IPC_PORT_GUI}. Sending WAKE IPC.")
+            if self.send_ipc_signal("WAKE"):
+                print("[SINGLE-INSTANCE] Active SG CUBE instance awakened via port 49152.")
+                print("[MIC_OWNER] MAIN ACTIVE")
+                print("[WAKE] APPLICATION READY")
+                self.activation_in_progress = False
+                return
+            else:
+                print(f"[IPC] Warning: Failed to deliver WAKE signal to port {IPC_PORT_GUI}.")
 
+        # If application was completely closed (port 49152 inactive), launch clean instance:
         time.sleep(0.1)
         _SILENT_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+        # Resolve canonical SG CUBE executable or modern web launcher
         app_exe = os.path.join(self.app_dir, "SG-CUBE.exe")
+        web_launcher = os.path.join(self.app_dir, "run_sgcube_web.py")
+        main_script = os.path.join(self.app_dir, "visionclaw_gui.py")
+
         if os.path.exists(app_exe):
+            print(f"[WAKE] Launching SG CUBE via native executable: {app_exe}")
             subprocess.Popen([app_exe], cwd=self.app_dir, creationflags=_SILENT_FLAGS)
         else:
             python_candidates = [
@@ -315,7 +326,11 @@ class SGCubeWakeListener:
                     python_exe = p
                     break
 
-            cmd = [python_exe, os.path.join(self.app_dir, "visionclaw_gui.py")]
+            if os.path.exists(web_launcher):
+                cmd = [python_exe, web_launcher]
+            else:
+                cmd = [python_exe, main_script, "--gui=web"]
+            print(f"[WAKE] Launching SG CUBE via Python: {' '.join(cmd)}")
             subprocess.Popen(cmd, cwd=self.app_dir, creationflags=_SILENT_FLAGS)
 
         print("[MIC_OWNER] MAIN ACTIVE")

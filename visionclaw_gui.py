@@ -12666,14 +12666,41 @@ class SGCubeApp:
         # Hide / minimize GUI window while dormant
         try:
             if getattr(self, 'web_mode', False):
+                if hasattr(self, 'web_window') and self.web_window:
+                    try:
+                        self.web_window.minimize()
+                    except Exception:
+                        pass
                 if os.name == 'nt':
                     try:
                         import win32gui, win32con
-                        hwnd = win32gui.FindWindow(None, "SG CUBE — Personal AI Companion")
-                        if hwnd:
-                            win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
-                    except Exception:
-                        pass
+                        target_hwnd = None
+
+                        def _find_web_win_sleep(hwnd, _):
+                            nonlocal target_hwnd
+                            if win32gui.IsWindow(hwnd):
+                                text = win32gui.GetWindowText(hwnd)
+                                if ("SG CUBE" in text or "VisionClaw" in text) and "Backend Engine" not in text:
+                                    target_hwnd = hwnd
+                                    return False
+                            return True
+
+                        try:
+                            win32gui.EnumWindows(_find_web_win_sleep, None)
+                        except Exception:
+                            pass
+
+                        if not target_hwnd:
+                            for candidate in ("SG CUBE — Personal AI Companion", "SG CUBE - Personal AI Companion", "SG CUBE"):
+                                target_hwnd = win32gui.FindWindow(None, candidate)
+                                if target_hwnd:
+                                    break
+
+                        if target_hwnd:
+                            win32gui.ShowWindow(target_hwnd, win32con.SW_MINIMIZE)
+                            print(f"[SLEEP] Minimized web UI window HWND {target_hwnd}.")
+                    except Exception as e:
+                        print(f"[SLEEP] Window minimize notice: {e}")
             else:
                 if self.root and self.root.winfo_exists():
                     self.root.withdraw()
@@ -13004,15 +13031,47 @@ class SGCubeApp:
 
         try:
             if getattr(self, 'web_mode', False):
+                # 1. Direct pywebview restoration
+                if hasattr(self, 'web_window') and self.web_window:
+                    try:
+                        self.web_window.restore()
+                        self.web_window.show()
+                    except Exception:
+                        pass
+
+                # 2. Native Win32 window restoration and foreground activation
                 if os.name == 'nt':
                     try:
                         import win32gui, win32con
-                        hwnd = win32gui.FindWindow(None, "SG CUBE — Personal AI Companion")
-                        if hwnd:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            win32gui.SetForegroundWindow(hwnd)
-                    except Exception:
-                        pass
+                        target_hwnd = None
+
+                        def _find_web_win_wake(hwnd, _):
+                            nonlocal target_hwnd
+                            if win32gui.IsWindow(hwnd):
+                                text = win32gui.GetWindowText(hwnd)
+                                if ("SG CUBE" in text or "VisionClaw" in text) and "Backend Engine" not in text:
+                                    target_hwnd = hwnd
+                                    return False
+                            return True
+
+                        try:
+                            win32gui.EnumWindows(_find_web_win_wake, None)
+                        except Exception:
+                            pass
+
+                        if not target_hwnd:
+                            for candidate in ("SG CUBE — Personal AI Companion", "SG CUBE - Personal AI Companion", "SG CUBE"):
+                                target_hwnd = win32gui.FindWindow(None, candidate)
+                                if target_hwnd:
+                                    break
+
+                        if target_hwnd:
+                            win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
+                            win32gui.BringWindowToTop(target_hwnd)
+                            win32gui.SetForegroundWindow(target_hwnd)
+                            print(f"[WAKE] Restored and focused web UI window HWND {target_hwnd}.")
+                    except Exception as win_err:
+                        print(f"[WAKE] Win32 window restore notice: {win_err}")
             else:
                 def _restore_tk():
                     try:
@@ -23596,7 +23655,7 @@ def _find_sgcube_visible_window():
                     buff = ctypes.create_unicode_buffer(length + 1)
                     user32.GetWindowTextW(hwnd, buff, length + 1)
                     title = buff.value
-                    if "SG CUBE" in title or "VisionClaw" in title:
+                    if ("SG CUBE" in title or "VisionClaw" in title) and "Backend Engine" not in title:
                         rect = wintypes.RECT()
                         user32.GetWindowRect(hwnd, ctypes.byref(rect))
                         if user32.IsIconic(hwnd) or ((rect.right - rect.left > 150) and (rect.bottom - rect.top > 150)):
@@ -23669,22 +23728,6 @@ def _check_and_wake_existing_instance() -> bool:
         return False
     except Exception as e:
         print(f"[SINGLE-INSTANCE] Notice during IPC probe: {e}")
-        return False
-
-
-
-        return False
-
-
-
-    except Exception as e:
-
-
-
-        print(f"[SINGLE-INSTANCE] Notice during IPC probe: {e}")
-
-
-
         return False
 
 
@@ -23792,6 +23835,7 @@ def main():
                 def run_tk_backend():
                     root = tk.Tk()
                     root.withdraw()
+                    root.title("SG CUBE Backend Engine")
                     app = SGCubeApp(root)
                     app.web_mode = True
                     app.register_event_listener(bridge.handle_backend_event)

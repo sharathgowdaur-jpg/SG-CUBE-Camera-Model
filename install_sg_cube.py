@@ -186,26 +186,45 @@ def create_windows_shortcuts():
     wake_bat = os.path.join(INSTALL_DIR, "run_wake_listener.bat")
     uninstall_bat = os.path.join(INSTALL_DIR, "Uninstall.bat")
 
-    # 1. Desktop Shortcut (resolves OneDrive-redirected Desktop properly)
+    # 1. Desktop Shortcuts (updates all desktop paths: OneDrive and local user profile)
+    desktop_dirs = set()
     try:
-        desktop_dir = shell.SpecialFolders("Desktop")
+        desktop_dirs.add(shell.SpecialFolders("Desktop"))
     except Exception:
-        desktop_dir = os.path.join(USERPROFILE, "Desktop")
-    desk_path = os.path.join(desktop_dir, "SG CUBE.lnk")
+        pass
+    local_desk = os.path.join(USERPROFILE, "Desktop")
+    if os.path.exists(local_desk):
+        desktop_dirs.add(local_desk)
+
     app_exe = os.path.join(INSTALL_DIR, "SG-CUBE.exe")
     wake_exe = os.path.join(INSTALL_DIR, "SG-CUBE-Wake-Listener.exe")
     desk_target = app_exe if os.path.exists(app_exe) else run_bat
     sm_target = app_exe if os.path.exists(app_exe) else run_bat
     wake_target = wake_exe if os.path.exists(wake_exe) else wake_bat
 
-    desk_link = shell.CreateShortcut(desk_path)
-    desk_link.TargetPath = desk_target
-    desk_link.WorkingDirectory = INSTALL_DIR
-    if os.path.exists(icon_path):
-        desk_link.IconLocation = f"{icon_path},0"
-    desk_link.Description = "SG CUBE — Multimodal AI Assistant"
-    desk_link.Save()
-    log("3/6", f"Desktop shortcut created: {desk_path}")
+    for d_dir in desktop_dirs:
+        desk_path = os.path.join(d_dir, "SG CUBE.lnk")
+        desk_link = shell.CreateShortcut(desk_path)
+        desk_link.TargetPath = desk_target
+        desk_link.Arguments = ""
+        desk_link.WorkingDirectory = INSTALL_DIR
+        if os.path.exists(icon_path):
+            desk_link.IconLocation = f"{icon_path},0"
+        desk_link.Description = "SG CUBE — Multimodal AI Assistant"
+        desk_link.Save()
+        log("3/6", f"Desktop shortcut created: {desk_path}")
+
+        desk_wake_path = os.path.join(d_dir, "SG CUBE Wake Listener.lnk")
+        desk_wake_link = shell.CreateShortcut(desk_wake_path)
+        desk_wake_link.TargetPath = wake_target
+        desk_wake_link.Arguments = ""
+        desk_wake_link.WorkingDirectory = INSTALL_DIR
+        if os.path.exists(icon_path):
+            desk_wake_link.IconLocation = f"{icon_path},0"
+        desk_wake_link.WindowStyle = 7
+        desk_wake_link.Description = "SG CUBE Background Wake Listener"
+        desk_wake_link.Save()
+        log("3/6", f"Desktop wake listener shortcut created: {desk_wake_path}")
 
     # 2. Start Menu Folder & Shortcuts
     try:
