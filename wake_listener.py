@@ -6,6 +6,7 @@ import threading
 import subprocess
 import re
 import queue
+from typing import Optional, Dict
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -27,6 +28,10 @@ from wake_word_matcher import WakeWordMatcher
 
 IPC_PORT_GUI = 49152
 IPC_PORT_WAKE_LISTENER = 49153
+
+CANONICAL_INSTALL_DIR = os.path.normpath(
+    os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local")), "Programs", "SG-CUBE")
+)
 
 class VoiceActivityDetector:
     """
@@ -177,6 +182,42 @@ class SGCubeWakeListener:
         draw.ellipse((22, 22, 42, 42), fill="#0b0c10")
         return img
 
+    def get_target_app_dir(self) -> str:
+        """ Returns the canonical installed application directory if it exists, else local app_dir """
+        if os.path.exists(os.path.join(CANONICAL_INSTALL_DIR, "visionclaw_gui.py")):
+            return CANONICAL_INSTALL_DIR
+        return self.app_dir
+
+    def get_visionclaw_process_info(self) -> Optional[dict]:
+        """ Inspects the process currently listening on IPC_PORT_GUI (49152) """
+        try:
+            import psutil
+            for conn in psutil.net_connections(kind='tcp4'):
+                if conn.laddr.port == IPC_PORT_GUI and conn.status == psutil.CONN_LISTEN:
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        return {
+                            "pid": conn.pid,
+                            "exe": os.path.normpath(proc.exe()),
+                            "cwd": os.path.normpath(proc.cwd() or ""),
+                            "cmdline": [os.path.normpath(c) for c in (proc.cmdline() or [])]
+                        }
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        return {"pid": conn.pid}
+        except Exception:
+            pass
+        return None
+
+    def is_process_canonical(self, proc_info: dict, target_dir: str) -> bool:
+        """ Returns True if the running process belongs to target_dir """
+        if not proc_info or "pid" not in proc_info:
+            return False
+        target_lower = os.path.normpath(target_dir).lower()
+        exe_lower = proc_info.get("exe", "").lower()
+        cwd_lower = proc_info.get("cwd", "").lower()
+        cmdline_lower = " ".join(proc_info.get("cmdline", [])).lower()
+        return (target_lower in exe_lower) or (target_lower in cwd_lower) or (target_lower in cmdline_lower)
+
     def check_windows_startup(self) -> bool:
         try:
             key = win32api.RegOpenKey(win32con.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, win32con.KEY_READ)
@@ -191,10 +232,11 @@ class SGCubeWakeListener:
         key = win32api.RegOpenKey(win32con.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, win32con.KEY_WRITE)
 
         if self.auto_start_enabled:
-            # Use the bat file so bundled runtime discovery works correctly on startup.
-            bat_path = os.path.join(self.app_dir, "run_wake_listener.bat")
+            # Always point to the canonical installed launcher if present
+            target_dir = self.get_target_app_dir()
+            bat_path = os.path.join(target_dir, "run_wake_listener.bat")
             win32api.RegSetValueEx(key, "SGCubeWakeListener", 0, win32con.REG_SZ, f'"{bat_path}"')
-            print("[REGISTRY] Added SGCubeWakeListener to Windows Startup.")
+            print(f"[REGISTRY] Added SGCubeWakeListener to Windows Startup ({bat_path}).")
         else:
             try:
                 win32api.RegDeleteValue(key, "SGCubeWakeListener")
@@ -248,9 +290,10 @@ class SGCubeWakeListener:
                 sock.close()
                 return "CLOSED"
             sock.sendall(b"STATUS\n")
-            resp = sock.recv(1024).decode('utf-8').strip()
+            resp = sock.recv(1024).decode('utf-8', errors='ignore').strip()
             sock.close()
-            return resp if resp in ("SLEEPING", "ACTIVE") else "ACTIVE"
+            st = resp.split(":")[0] if resp else "CLOSED"
+            return st if st in ("SLEEPING", "ACTIVE") else "ACTIVE"
         except Exception:
             return "CLOSED"
 
@@ -268,7 +311,7 @@ class SGCubeWakeListener:
             return False
 
     def launch_or_activate_visionclaw(self):
-        """ Launches VisionClaw or brings existing window to front """
+        """ Launches the latest installed VisionClaw or brings existing window to front """
         now = time.time()
         if now - self.last_wake_trigger_time < 2.0 or self.activation_in_progress:
             return
@@ -280,20 +323,39 @@ class SGCubeWakeListener:
         print("[MIC_OWNER] HOTWORD RELEASED")
         self.listening_paused = True
 
+        target_dir = self.get_target_app_dir()
+        proc_info = self.get_visionclaw_process_info()
+
         if self.is_visionclaw_running():
-            print("[SINGLE-INSTANCE] Active SG CUBE instance detected on port 49152. Sending WAKE IPC.")
-            self.send_ipc_signal("WAKE")
-            print("[MIC_OWNER] MAIN ACTIVE")
-            print("[WAKE] APPLICATION READY")
-            self.activation_in_progress = False
-            return
+            # If an existing process is holding port 49152, verify it is from target_dir
+            if proc_info and not self.is_process_canonical(proc_info, target_dir):
+                print(f"[SINGLE-INSTANCE] Stale/outdated process (PID {proc_info.get('pid')}) detected on port {IPC_PORT_GUI}. Closing it...")
+                self.send_ipc_signal("CLOSE")
+                time.sleep(0.8)
+                if self.is_visionclaw_running() and "pid" in proc_info:
+                    try:
+                        import psutil
+                        p = psutil.Process(proc_info['pid'])
+                        p.terminate()
+                        p.wait(timeout=1.5)
+                    except Exception:
+                        pass
+                # Port is now freed, proceed to launch target_dir below
+            else:
+                print(f"[SINGLE-INSTANCE] Active latest SG CUBE instance detected on port {IPC_PORT_GUI}. Sending WAKE IPC.")
+                self.send_ipc_signal("WAKE")
+                print("[MIC_OWNER] MAIN ACTIVE")
+                print("[WAKE] APPLICATION READY")
+                self.activation_in_progress = False
+                return
 
         time.sleep(0.1)
+        run_bat = os.path.join(target_dir, "run.bat")
         python_candidates = [
-            os.path.join(self.app_dir, "runtime", "Scripts", "python.exe"),
-            os.path.join(self.app_dir, "runtime", "python.exe"),
+            os.path.join(target_dir, "runtime", "Scripts", "python.exe"),
+            os.path.join(target_dir, "runtime", "python.exe"),
             sys.executable,
-            os.path.join(self.app_dir, ".venv", "Scripts", "python.exe"),
+            os.path.join(target_dir, ".venv", "Scripts", "python.exe"),
         ]
         python_exe = sys.executable
         for p in python_candidates:
@@ -301,8 +363,12 @@ class SGCubeWakeListener:
                 python_exe = p
                 break
 
-        cmd = [python_exe, os.path.join(self.app_dir, "visionclaw_gui.py")]
-        subprocess.Popen(cmd, cwd=self.app_dir)
+        print(f"[WAKE] Launching latest installed SG CUBE from: {target_dir}")
+        if os.path.exists(run_bat):
+            subprocess.Popen([run_bat], cwd=target_dir)
+        else:
+            cmd = [python_exe, os.path.join(target_dir, "visionclaw_gui.py")]
+            subprocess.Popen(cmd, cwd=target_dir)
 
         print("[MIC_OWNER] MAIN ACTIVE")
         print("[WAKE] APPLICATION READY")

@@ -16,6 +16,8 @@ export interface SystemStatus {
   ai: "Ready" | "Connecting" | "Offline";
   battery: string;
   network: "Online" | "Degraded" | "Offline";
+  gemini_state?: string;
+  voice?: string;
 }
 
 export interface EnvironmentState {
@@ -97,4 +99,49 @@ export interface BackendState {
   firstRunCompleted?: boolean;
   userName?: string;
   hasApiKey?: boolean;
+  apiUsage?: ApiUsageData | null;
+  cameraMonitoring?: CameraMonitoringState;
+}
+
+export interface CameraMonitoringState {
+  enabled: boolean;
+  intervalSeconds: number;
+  status: "IDLE" | "ANALYZING" | "COOLDOWN" | "ERROR";
+  lastObservationTime: string | null;
+  latestDescription: string;
+  error: string | null;
+  peopleCount: number;
+  objectsCount: number;
+  movementDetected: boolean;
+}
+
+export interface RateLimits {
+  requestsPerMinute: number;
+  tokensPerMinute: number;
+  requestsPerDay: number;
+  tier: string;
+}
+
+export interface ApiUsageData {
+  provider: string;
+  status: "CONNECTED" | "DISCONNECTED" | "ERROR" | "CONNECTING" | "NO_KEY";
+  statusMessage: string;
+  activeKeySlot: number | null;
+  activeKeyMasked: string;
+  activeModel: string;
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  sessionTurns: number;
+  promptTokens: number;
+  candidatesTokens: number;
+  totalTokens: number;
+  quotaLimit: number | null;
+  remainingQuota: number | null;
+  quotaDisplay: string;
+  usagePercentage: number | null;
+  usageScope: string;
+  rateLimits?: RateLimits;
+  lastSyncTime: string | null;
+  lastError?: string | null;
 }

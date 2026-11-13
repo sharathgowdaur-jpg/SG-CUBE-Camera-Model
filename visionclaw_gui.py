@@ -1,5 +1,7 @@
 import os
 import sys
+from datetime import datetime
+import datetime as dt_module
 import re
 import time
 
@@ -4238,6 +4240,21 @@ class TurnExecutionTracker:
                     if k.startswith("screenshot:"):
                         res = v
                         break
+            if res is None and action_key.startswith("youtube:"):
+                parts = action_key.split(":")
+                act_type = parts[1] if len(parts) > 1 else ""
+                q = parts[2] if len(parts) > 2 else ""
+                for k, v in self._executed_actions.items():
+                    if k.startswith("youtube:"):
+                        k_parts = k.split(":")
+                        k_act = k_parts[1] if len(k_parts) > 1 else ""
+                        k_q = k_parts[2] if len(k_parts) > 2 else ""
+                        if act_type in ("search", "play") and k_act in ("search", "play") and (q == k_q or not q or not k_q):
+                            res = v
+                            break
+                        elif act_type == k_act and (q == k_q or not q or not k_q):
+                            res = v
+                            break
             tid = self._current_turn_id
         if res is not None:
             safe_key = action_key.split(":")[0] if any(s in action_key for s in ["pin", "password", "secret"]) else action_key
@@ -4403,6 +4420,12 @@ class SGCubeApp:
             return
         self._last_local_tts_text = text
         self._last_local_tts_time = now
+
+        try:
+            from assistive import echo_guard
+            echo_guard.note_assistant_speech(text)
+        except Exception:
+            pass
 
         # SECURITY PATH: Always use local SAPI — must never depend on Gemini network.
         # Security challenges (voice password prompts/responses) require instant, offline-capable speech.
@@ -4791,6 +4814,9 @@ class SGCubeApp:
 
 
 
+        self.gemini_session_state = "API_KEY_SELECTED" if (hasattr(self.engine, "key_manager") and self.engine.key_manager.get_active_api_key()) else "API_KEY_MISSING"
+        self._gemini_state_timestamps = {}
+        self.startup_greeting_completed = False
         self.wake_greeting_pending = False
 
 
@@ -5394,7 +5420,7 @@ class SGCubeApp:
 
 
 
-                            conn.sendall(f"{status}\n".encode('utf-8'))
+                            conn.sendall(f"{status}:{os.path.abspath(os.path.dirname(__file__))}\n".encode('utf-8'))
 
 
 
@@ -5450,6 +5476,39 @@ class SGCubeApp:
 
 
 
+    def set_gemini_state(self, new_state: str, details: str = ""):
+        """
+        Explicit state transitions for Gemini Live connection:
+        API_KEY_MISSING, API_KEY_SELECTED, API_AUTHENTICATING, API_AUTHENTICATED,
+        GEMINI_CONNECTING, GEMINI_SETUP_COMPLETE, GEMINI_SESSION_READY,
+        GEMINI_CONNECTION_ERROR, GEMINI_RECONNECTING
+        """
+        old_state = getattr(self, "gemini_session_state", "UNKNOWN")
+        from datetime import datetime
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with self.session_lock:
+            self.gemini_session_state = new_state
+            if not hasattr(self, "_gemini_state_timestamps"):
+                self._gemini_state_timestamps = {}
+            self._gemini_state_timestamps[new_state] = now_ts
+        log_line = f"[{now_ts}] [GEMINI_STATE] {old_state} -> {new_state}"
+        if details:
+            log_line += f" ({details})"
+        print(log_line)
+        if hasattr(self, "gui_queue") and self.gui_queue:
+            self.gui_queue.put(("GEMINI_STATE", new_state))
+        if hasattr(self, "bridge_server") and self.bridge_server:
+            try:
+                self.bridge_server.broadcast_sync({
+                    "type": "GEMINI_STATE",
+                    "gemini_state": new_state,
+                    "previous_state": old_state,
+                    "timestamp": now_ts,
+                    "details": details
+                })
+            except Exception:
+                pass
+
     def set_state(self, new_state: str):
 
 
@@ -5499,13 +5558,8 @@ class SGCubeApp:
 
 
         with self.state_lock:
-
-
-
             self.current_response_id += 1
-
-
-
+            self._gemini_turn_completed = True
             new_id = self.current_response_id
 
 
@@ -12185,6 +12239,16 @@ class SGCubeApp:
 
 
 
+    def start_mic(self):
+        """ Idempotent explicit start of microphone and AI session """
+        if not self.ai_running:
+            self.start_ai()
+
+    def stop_mic(self):
+        """ Idempotent explicit stop of microphone and AI session """
+        if self.ai_running:
+            self.stop_ai()
+
     def start_ai(self, api_key=None):
         if not getattr(self, "_offline_model_prefetched", False):  # so offline mode works in a later outage
             self._offline_model_prefetched = True
@@ -12202,37 +12266,19 @@ class SGCubeApp:
 
 
         if not api_key:
-
-
-
+            self.set_gemini_state("API_AUTHENTICATING", "Resolving active Gemini API key")
             key_info = self.engine.key_manager.get_active_key()
-
-
-
             if not key_info:
-
-
-
                 print("[API-KEY-FAILOVER] No available valid Gemini API keys found.")
-
-
-
+                self.set_gemini_state("API_KEY_MISSING", "No active Gemini API key configured")
                 self.set_state("DISCONNECTED")
                 self._start_offline_voice()
-
-
-
                 return
-
-
-
-            _, api_key = key_info
-
-
-
-
-
-
+            key_num, api_key = key_info
+            self.set_gemini_state("API_KEY_SELECTED", f"Slot {key_num} active")
+        else:
+            self.set_gemini_state("API_KEY_SELECTED", "Direct API key supplied")
+        self.set_gemini_state("API_AUTHENTICATED", "Key verified and ready for Gemini Live connection")
 
         self.ai_running = True
 
@@ -13284,6 +13330,7 @@ class SGCubeApp:
 
 
             self.wake_greeting_pending = False
+            self.startup_greeting_completed = True
 
 
 
@@ -14440,7 +14487,14 @@ class SGCubeApp:
 
 
 
-                    self.mic_queue.put(bytes(indata))
+                    try:
+                        self.mic_queue.put_nowait(bytes(indata))
+                    except queue.Full:
+                        try:
+                            self.mic_queue.get_nowait()
+                            self.mic_queue.put_nowait(bytes(indata))
+                        except Exception:
+                            pass
 
 
 
@@ -14497,6 +14551,15 @@ class SGCubeApp:
 
 
             print(f"[ERROR] AI worker thread exception: {e}")
+            import traceback
+            traceback.print_exc()
+
+            reason, _ = self.engine.key_manager.classify_failure(e)
+            if reason == "LOCAL_APP_ERROR":
+                print(f"[AI-WORKER] Local application error: {e}. Keys remain valid, not failing over.")
+                self.set_gemini_state("GEMINI_CONNECTION_ERROR", f"Local application error: {e}")
+                self.gui_queue.put(("STATUS_UPDATE", f"APP ERROR: {type(e).__name__}"))
+                return
 
 
 
@@ -14642,8 +14705,17 @@ class SGCubeApp:
                         print(f"[BARGE-IN] Dropping stale audio chunk from response_id={resp_id} (active={self.current_response_id})")
                         continue
 
-                    gain = self.engine.store.get_setting("assistant_volume", 1.25)
-                    if gain != 1.0:
+                    # Jitter buffering: When onset begins from idle, allow 3 chunks (~75ms) to accumulate
+                    # so PortAudio hardware buffer does not starve between initial network frames
+                    if self.current_state != "AI_SPEAKING" and self.playback_queue.qsize() < 3:
+                        time.sleep(0.04)
+
+                    # Ensure 2-byte alignment for 16-bit PCM samples
+                    if len(pcm_chunk) % 2 != 0:
+                        pcm_chunk = pcm_chunk[:len(pcm_chunk) - 1]
+
+                    gain = self.engine.store.get_setting("assistant_volume", 1.0)
+                    if gain != 1.0 and len(pcm_chunk) >= 2:
                         audio_np = np.frombuffer(pcm_chunk, dtype=np.int16).astype(np.float32)
                         audio_np = np.clip(audio_np * gain, -32768.0, 32767.0).astype(np.int16)
                         pcm_chunk = audio_np.tobytes()
@@ -14659,8 +14731,10 @@ class SGCubeApp:
                         except Exception as fallback_play_err:
                             print("[PLAYBACK] Direct play fallback error:", fallback_play_err)
 
-                    if self.playback_queue.empty() and self.ai_running:
-                        self.set_state("LISTENING")
+                    if self.playback_queue.empty() and self.ai_running and getattr(self, "_gemini_turn_completed", True):
+                        # Ensure output hardware has drained before reverting state to LISTENING
+                        if aom is None or not aom.is_playing_pcm():
+                            self.set_state("LISTENING")
 
             except queue.Empty:
                 continue
@@ -14704,7 +14778,7 @@ class SGCubeApp:
 
 
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
 
 
 
@@ -15225,9 +15299,9 @@ class SGCubeApp:
 
             output_audio_transcription=types.AudioTranscriptionConfig(),
 
-            # The user's speech no longer cuts Gemini off mid-answer: without echo
-            # cancellation, its own voice through the speakers kept interrupting it.
-            # Playback stops only for an explicit stop command (echo_guard.is_stop_command).
+            # Client-side barge-in control: server does not cut off speech on speaker acoustic bleed.
+            # Local client inspects incoming speech chunks: genuine stop commands ('stop', 'quiet', 'cancel')
+            # and substantial non-echo speech stop playback cleanly without false echo cutoffs.
             realtime_input_config=types.RealtimeInputConfig(
                 activity_handling=types.ActivityHandling.NO_INTERRUPTION
             ),
@@ -15262,11 +15336,20 @@ class SGCubeApp:
 
 
 
+            self.set_gemini_state("GEMINI_CONNECTING", f"Connecting to {model_name} (session_id={session_id})")
+            now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.gui_queue.put(("STATUS_UPDATE", "MICROPHONE READY — AI CONNECTING"))
             async with client.aio.live.connect(model=model_name, config=config) as session:
 
 
 
                 session_established = True
+                self._gemini_reconnect_attempts = 0
+                self.set_gemini_state("GEMINI_SETUP_COMPLETE", f"Session established (session_id={session_id})")
+                now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                print(f"[{now_ts}] [GEMINI-01] Connection established (session_id={session_id}, state=GEMINI_SETUP_COMPLETE)")
+                if hasattr(self, "audio_output_manager") and self.audio_output_manager:
+                    self.audio_output_manager.set_gemini_live_active(True)
                 self._stop_offline_voice()  # Gemini is back: it owns the mic and the voice again
 
 
@@ -15283,6 +15366,8 @@ class SGCubeApp:
                         break
                 if drained_chunks:
                     print(f"[MIC] Drained {drained_chunks} stale audio chunks on session connect.")
+                self.set_gemini_state("GEMINI_SESSION_READY", f"Live streaming active (session_id={session_id})")
+                print(f"[{now_ts}] [GEMINI-02] Setup completed (session_id={session_id}, state=GEMINI_SESSION_READY)")
 
 
 
@@ -15298,7 +15383,7 @@ class SGCubeApp:
 
 
 
-                if self.engine.store.should_trigger_startup_greeting():
+                if self.engine.store.should_trigger_startup_greeting() and not getattr(self, "startup_greeting_completed", False):
 
 
 
@@ -15311,6 +15396,8 @@ class SGCubeApp:
 
 
                     self.gui_queue.put(("TRANSCRIPT_AI", greeting))
+                    self.startup_greeting_completed = True
+                    self.wake_greeting_pending = False
                     self._speak_local_response(greeting)
 
 
@@ -15416,6 +15503,9 @@ class SGCubeApp:
 
 
 
+            self.set_gemini_state("GEMINI_CONNECTION_ERROR", f"Session exception: {e}")
+            if hasattr(self, "audio_output_manager") and self.audio_output_manager:
+                self.audio_output_manager.set_gemini_live_active(False)
             print(f"[SESSION] Live session exception (session_id={session_id}, established={session_established}): {e}")
 
 
@@ -15435,6 +15525,12 @@ class SGCubeApp:
             reason, _ = self.engine.key_manager.classify_failure(e)
             turn_metrics.record_event("session_error")
 
+            if reason == "LOCAL_APP_ERROR":
+                import traceback
+                print(f"[SESSION] Local application bug in session {session_id}: {e}")
+                traceback.print_exc()
+                raise e
+
 
 
             if not session_established or reason in ("INVALID_KEY", "DAILY_QUOTA_EXHAUSTED"):
@@ -15450,16 +15546,26 @@ class SGCubeApp:
 
 
             # For established sessions experiencing a transient network disconnect, attempt reconnect
+            attempts = getattr(self, "_gemini_reconnect_attempts", 0) + 1
+            self._gemini_reconnect_attempts = attempts
 
+            if attempts > 6:
+                print(f"[RECONNECT] Maximum reconnect attempts ({attempts}) reached. Switching to offline voice standby.")
+                self.set_gemini_state("GEMINI_CONNECTION_ERROR", "Persistent network disconnect. Offline standby active.")
+                self.set_state("DISCONNECTED")
+                self._start_offline_voice()
+                self._gemini_reconnect_attempts = 0
+                return
 
+            import random
+            backoff_base = min(30.0, 1.5 * (2 ** min(attempts - 1, 4)))
+            jitter = random.uniform(0.1, 0.4)
+            delay = backoff_base + jitter
 
+            self.set_gemini_state("GEMINI_RECONNECTING", f"Transient network disconnect (attempt {attempts}), retrying in {delay:.1f}s...")
             self.set_state("RECONNECTING")
 
-
-
-            await asyncio.sleep(1.5)
-
-
+            await asyncio.sleep(delay)
 
             if self.ai_running and self.current_state not in ("SLEEPING", "STOPPED", "CLOSED"):
 
@@ -15960,6 +16066,8 @@ class SGCubeApp:
                         is_local_speaking = get_audio_arbiter().is_speaking()
                     except Exception:
                         pass
+                if not is_local_speaking and (self.current_state == "AI_SPEAKING" or not self.playback_queue.empty()):
+                    is_local_speaking = True
 
                 if is_local_speaking:
                     await asyncio.sleep(0.01)
@@ -16201,21 +16309,13 @@ class SGCubeApp:
         # Diagnostic logging strictly for Section 2 safe verification
         is_diag_phrase = (user_text.strip().lower() == "set password")
 
-
-
         if is_diag_phrase:
-
-
-
             print(f"[DIAGNOSTIC] TRANSCRIPT_RECEIVED: {user_text}")
-
-
-
             print(f"[DIAGNOSTIC] ROUTER_CALLED: YES")
-            diag_route = self.engine.router.route_intent(user_text)
+            diag_route = diag_ir
             print(f"[DIAGNOSTIC] ROUTED_INTENT: {diag_route.get('intent')}")
 
-        intent_route = self.engine.router.route_intent(user_text)
+        intent_route = diag_ir
         resolve_fn = getattr(self, '_resolve_intent_action_key', SGCubeApp._resolve_intent_action_key)
         action_key = resolve_fn(intent_route.get("intent"), intent_route.get("params", {}), intent_route.get("target", ""))
         tracker = getattr(self, 'turn_tracker', None)
@@ -16224,7 +16324,7 @@ class SGCubeApp:
         if cached is not None:
             local_response = cached["response"]
         else:
-            local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id)
+            local_response = self.engine.process_user_speech_query(user_text, session_id=self.active_history_session_id, precomputed_route=intent_route)
             if local_response and action_key and tracker:
                 fmt_fn = getattr(self, '_format_tool_result_content', SGCubeApp._format_tool_result_content)
                 res_content = fmt_fn(action_key, local_response)
@@ -16540,8 +16640,22 @@ class SGCubeApp:
             return f"windows_settings:{p.lower().strip()}"
         elif intent and intent.startswith("NOTEPAD_"):
             return f"notepad:{intent.lower()}:{params.get('action', params.get('text', ''))}"
+        elif intent == "PLAY_MEDIA":
+            platform = (params.get("platform") or "youtube").lower().strip()
+            q = (params.get("query") or params.get("title") or target or "").lower().strip()
+            if platform == "youtube":
+                return f"youtube:play:{q}" if q else "youtube:play"
+            return f"media:play:{q}"
         elif intent and intent.startswith("YOUTUBE_"):
-            return f"youtube:{intent.lower()}:{params.get('query', '')}"
+            sub = intent.replace("YOUTUBE_", "").lower().strip()
+            q = (params.get("query") or params.get("title") or target or "").lower().strip()
+            if sub in ("search", "find"):
+                return f"youtube:search:{q}"
+            elif sub in ("open", "launch"):
+                return "youtube:open"
+            elif sub in ("play",):
+                return f"youtube:play:{q}" if q else "youtube:play"
+            return f"youtube:{sub}"
         elif intent and intent.startswith("SCREENSHOT_"):
             return f"screenshot:{intent.lower()}"
         elif intent == "SYSTEM_WINDOW_CONTROL":
@@ -16568,7 +16682,21 @@ class SGCubeApp:
         elif fn_name in ("notepad_control", "write_notepad_text", "open_notepad"):
             return f"notepad:{fn_name}"
         elif fn_name in ("youtube_control", "search_youtube", "open_youtube"):
-            return f"youtube:{fn_name}"
+            if fn_name == "open_youtube":
+                return "youtube:open"
+            elif fn_name == "search_youtube":
+                q = (fn_args.get("query") or "").lower().strip()
+                return f"youtube:search:{q}"
+            else:
+                act = (fn_args.get("action") or "search").lower().strip()
+                q = (fn_args.get("query") or "").lower().strip()
+                if act in ("search", "find"):
+                    return f"youtube:search:{q}"
+                elif act in ("open", "launch"):
+                    return "youtube:open"
+                elif act in ("play",):
+                    return f"youtube:play:{q}" if q else "youtube:play"
+                return f"youtube:{act}"
         elif fn_name in ("take_screenshot", "screenshot_control"):
             return f"screenshot:{fn_name}"
         elif fn_name in ("window_control", "maximize_window", "minimize_window", "close_window"):
@@ -16699,10 +16827,27 @@ class SGCubeApp:
 
 
                     if server_content is not None:
-
-
+                        # 1. Handle Gemini server-side interruption signal (START_OF_ACTIVITY_INTERRUPTS)
+                        if getattr(server_content, "interrupted", False):
+                            now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            print(f"[{now_ts}] [GEMINI] Server signaled interruption: stopping playback.")
+                            self._clear_playback_queue()
+                            if hasattr(self, "audio_output_manager") and self.audio_output_manager:
+                                self.audio_output_manager.stop_speech()
+                            self.engine.history.clear_assistant_turn()
+                            self.turn_tracker.reset_current_turn()
+                            turn_intercepted = False
+                            self.current_turn_intercepted = False
+                            self.set_state("LISTENING")
 
                         if server_content.input_transcription and server_content.input_transcription.text:
+                            # Cancel pending startup/wake greeting when user speaks
+                            if getattr(self, "pending_speech_prompt", None) or getattr(self, "wake_greeting_pending", False):
+                                self.pending_speech_prompt = None
+                                self.wake_greeting_pending = False
+                                self.startup_greeting_completed = True
+                                print("[GREETING] User speech detected: cancelled pending startup greeting.")
+
 
 
 
@@ -16732,15 +16877,19 @@ class SGCubeApp:
 
                             self.set_state("USER_SPEAKING")
 
+                            # Conversational interruption / barge-in:
+                            # Playback stops cleanly on an explicit user stop command ('stop', 'be quiet', 'cancel', etc.).
+                            # While the assistant is speaking, speaker acoustic bleed will be transcribed by Gemini STT.
+                            # We never stop playback on speech that is detected as an echo of assistant speech, nor on
+                            # speculative conversational phrases, preventing speaker bleed from cutting off Puck speech.
+                            combined_text = f"{self.user_transcript_buffer or ''} {text_chunk}".strip()
+                            is_stop = echo_guard.is_stop_command(combined_text) or echo_guard.is_stop_command(text_chunk)
 
-
-                            # BARGE-IN only on an explicit stop command. Any speech used to clear
-                            # playback, so a cough, the TV or the assistant's own echo cut it off.
-                            if echo_guard.is_stop_command(f"{self.user_transcript_buffer or ''} {text_chunk}") \
-                                    or echo_guard.is_stop_command(text_chunk):
+                            if is_stop:
+                                print(f"[BARGE-IN] Explicit user stop command detected ('{text_chunk}'): clearing playback queue.")
                                 self._clear_playback_queue()
-
-
+                                if hasattr(self, "audio_output_manager") and self.audio_output_manager:
+                                    self.audio_output_manager.stop_speech()
 
                             turn_intercepted = False
                             self.current_turn_intercepted = False
@@ -16896,22 +17045,12 @@ class SGCubeApp:
 
 
                                         pcm_bytes = part.inline_data.data
-
-
-
                                         # Tag audio chunk with current response_id
-
-
-
+                                        self._gemini_turn_completed = False
                                         self.playback_queue.put((curr_resp_id, pcm_bytes))
 
-
-
-
-
-
-
                         if server_content.turn_complete:
+                            self._gemini_turn_completed = True
 
 
 
@@ -23449,12 +23588,9 @@ def _check_and_wake_existing_instance() -> bool:
                     win32gui.SetForegroundWindow(vis_hwnd)
                 except Exception:
                     pass
-                return True
             else:
-                print(f"[SINGLE-INSTANCE] Port {IPC_PORT_GUI} is held by a background process with no visible window. Terminating stale process...")
-                _cleanup_stale_instance_on_port(IPC_PORT_GUI)
-                time.sleep(0.5)
-                return False
+                print(f"[SINGLE-INSTANCE] Active SG CUBE instance confirmed on port {IPC_PORT_GUI} (acknowledged WAKE signal). Reusing active instance.")
+            return True
 
 
 
@@ -23594,7 +23730,8 @@ def main():
         else:
             try:
                 from bridge_server import bridge
-                bridge.start(host="127.0.0.1", port=args.port)
+                if not bridge.start(host="127.0.0.1", port=args.port):
+                    raise RuntimeError(f"Web Bridge Server failed to bind or verify health on port {args.port}")
 
                 ready_evt = threading.Event()
                 app_holder = {}

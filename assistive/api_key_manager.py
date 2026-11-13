@@ -235,6 +235,7 @@ class APIKeyManager:
         """
         Classifies an API exception into specific failure categories and assigns appropriate cooldown.
         Categories:
+        0. Local Python Programming Errors -> 0s cooldown, NEVER mark keys failed or failover!
         1. Invalid Key / Auth Failure -> Long cooldown (30 days / user re-entry required)
         2. Daily Quota Exhaustion -> 24 hours (86400s)
         3. Rate Limit / 429 -> 60s or parsed Retry-After
@@ -244,7 +245,16 @@ class APIKeyManager:
         if error is None:
             return "GENERIC_ERROR", self.cooldown_duration
 
+        # 0. Local Python Programming Errors / Application Bugs
+        # NEVER penalize or failover API keys due to local code bugs!
+        if isinstance(error, (NameError, TypeError, AttributeError, SyntaxError, ImportError, KeyError, IndexError, UnboundLocalError, ValueError)):
+            err_module = getattr(type(error), "__module__", "")
+            if err_module == "builtins":
+                return "LOCAL_APP_ERROR", 0.0
+
         err_str = str(error).lower()
+        if any(k in err_str for k in ["name '", "not defined", "attributeerror", "typeerror", "cannot import name"]):
+            return "LOCAL_APP_ERROR", 0.0
 
         # 1. Invalid Key / Authentication & Permission Errors
         if any(k in err_str for k in ["api_key_invalid", "api key not valid", "invalid api key", "permission_denied", "unauthenticated", "invalid_argument"]):
@@ -284,6 +294,10 @@ class APIKeyManager:
                 reason = "GENERIC"
                 cd = self.cooldown_duration
 
+            if reason == "LOCAL_APP_ERROR":
+                print(f"[API-KEY-FAILOVER] Key {key_num} NOT marked unavailable (LOCAL_APP_ERROR: local code exception, key remains valid).")
+                return
+
             self.key_cooldowns[key_num] = time.time() + cd
             print(f"[API-KEY-FAILOVER] Key {key_num} marked unavailable ({reason}, cooldown {cd:.0f}s).")
             if self.active_key_num == key_num:
@@ -318,6 +332,11 @@ class APIKeyManager:
 
     def get_next_failover_key(self, current_failed_num: int, error: Optional[Exception] = None) -> Optional[Tuple[int, str]]:
         """ Marks current key as failed with error classification and returns next available key in priority order """
+        if error is not None:
+            reason, _ = self.classify_failure(error)
+            if reason == "LOCAL_APP_ERROR":
+                print(f"[API-KEY-FAILOVER] Suppressed failover for Key {current_failed_num}: error '{type(error).__name__}: {error}' is a local application issue, not an API key issue.")
+                return None
         self.mark_key_failed(current_failed_num, error=error)
         return self.get_active_key()
 
@@ -346,8 +365,18 @@ class APIKeyManager:
             models_pager = client.models.list(config={"page_size": 1})
             _ = next(iter(models_pager), None)
             print("[API-KEY] Connection test successful. Key validated with Gemini server.")
+            try:
+                from assistive.api_usage_tracker import get_usage_tracker
+                get_usage_tracker().record_request(success=True)
+            except Exception:
+                pass
             return True, "Connection successful. Gemini API key is valid."
         except Exception as e:
+            try:
+                from assistive.api_usage_tracker import get_usage_tracker
+                get_usage_tracker().record_request(success=False, error=str(e))
+            except Exception:
+                pass
             err_msg = str(e).lower()
             if "connect" in err_msg or "network" in err_msg or "resolution" in err_msg or "timeout" in err_msg:
                 return False, "Could not reach Gemini server. Please check your network connection."

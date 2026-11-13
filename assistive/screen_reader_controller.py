@@ -575,11 +575,31 @@ class ScreenReaderController:
                     thinking_config=genai_types.ThinkingConfig(thinking_budget=0)
                 ) if model.startswith("gemini-2.5") else None
                 response = client.models.generate_content(model=model, contents=contents, config=config)
+                try:
+                    from assistive.api_usage_tracker import get_usage_tracker
+                    um = getattr(response, "usage_metadata", None)
+                    p_tok = getattr(um, "prompt_token_count", 0) if um else 0
+                    c_tok = getattr(um, "candidates_token_count", 0) if um else 0
+                    t_tok = getattr(um, "total_token_count", p_tok + c_tok) if um else (p_tok + c_tok)
+                    get_usage_tracker().record_request(
+                        model=model,
+                        prompt_tokens=p_tok,
+                        candidates_tokens=c_tok,
+                        total_tokens=t_tok,
+                        success=True
+                    )
+                except Exception:
+                    pass
                 text = (response.text or "").strip()
                 if text:
                     self._last_good = (model, key)
                     return text
             except Exception as e:
+                try:
+                    from assistive.api_usage_tracker import get_usage_tracker
+                    get_usage_tracker().record_request(model=model, success=False, error=str(e))
+                except Exception:
+                    pass
                 msg = str(e)
                 if "404" in msg or "NOT_FOUND" in msg:
                     retired.add(model)

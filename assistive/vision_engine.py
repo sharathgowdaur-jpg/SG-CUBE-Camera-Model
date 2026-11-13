@@ -697,7 +697,7 @@ class VisionEngine:
 
         return alerts_generated
 
-    def process_user_speech_query(self, user_transcript: str, session_id: Optional[str] = None) -> Optional[str]:
+    def process_user_speech_query(self, user_transcript: str, session_id: Optional[str] = None, precomputed_route: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """
         Routes user speech transcript to local perception, context, memory, and task intent handlers.
         Returns immediate spoken response text if handled locally, or None to delegate to Gemini Live.
@@ -706,7 +706,7 @@ class VisionEngine:
         self.context.prune_stale()
 
         # Check for Context Reset intent immediately
-        route = self.router.route_intent(user_transcript)
+        route = precomputed_route if precomputed_route is not None else self.router.route_intent(user_transcript)
         intent = route["intent"]
         if intent in ("CONTEXT_RESET", "AUTOMATION_CANCEL", "COMPUTER_ACTION_CANCEL") or user_transcript.strip().lower() in ("cancel", "stop", "abort", "nevermind", "cancel action", "halt"):
             self.context.reset_context()
@@ -1906,9 +1906,11 @@ class VisionEngine:
             if setting_key == "greeting_enabled":
                 self.face_recognizer.set_greetings_enabled(val)
                 resp = f"Greetings are now {'enabled' if val else 'disabled'}."
-            elif setting_key == "environment_monitor_enabled":
+            elif setting_key in ("environment_monitor_enabled", "camera_monitoring_enabled"):
                 self.monitor.set_mode("continuous" if val else "on_demand")
-                resp = f"Continuous environment monitoring is now {'on' if val else 'off'}."
+                if hasattr(self, "camera_monitor_controller") and self.camera_monitor_controller:
+                    self.camera_monitor_controller.set_enabled(bool(val))
+                resp = f"Camera monitoring is now {'on' if val else 'off'}."
             else:
                 resp = "Setting updated."
             self.response_manager.add_response(resp, priority=2, force=True)

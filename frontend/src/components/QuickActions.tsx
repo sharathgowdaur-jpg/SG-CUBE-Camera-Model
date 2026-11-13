@@ -1,17 +1,21 @@
 import React, { useState } from "react";
-import { Mic, MicOff, Camera, VideoOff, Square, Power, Send } from "lucide-react";
-import type { SystemStatus, AssistantState } from "@/types";
+import { Mic, MicOff, Camera, VideoOff, Square, Power, Send, Radio } from "lucide-react";
+import type { SystemStatus, AssistantState, CameraMonitoringState } from "@/types";
 
 interface QuickActionsProps {
   status: SystemStatus;
   state: AssistantState;
+  cameraMonitoring?: CameraMonitoringState;
   onSendAction: (action: string, payload?: any) => void;
+  onToggleMonitoring?: () => void;
 }
 
 export const QuickActions: React.FC<QuickActionsProps> = ({
   status,
   state,
+  cameraMonitoring,
   onSendAction,
+  onToggleMonitoring,
 }) => {
   const [inputText, setInputText] = useState("");
 
@@ -23,6 +27,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
   };
 
   const isSleeping = state === "SLEEPING";
+  const isMonitoringOn = Boolean(cameraMonitoring?.enabled);
 
   return (
     <div className="w-full flex items-center justify-between gap-3 px-4 py-1.5 bg-[#060B1A]/90 border-t border-cyan-500/20 backdrop-blur-md select-none z-20">
@@ -44,7 +49,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
 
         {/* Mic Toggle */}
         <button
-          onClick={() => onSendAction("TOGGLE_MIC")}
+          onClick={() => onSendAction(status.microphone === "Active" ? "STOP_MIC" : "START_MIC")}
           className="px-3 py-1 rounded-md text-xs font-mono text-text-muted border border-cyan-500/20 bg-black/40 hover:text-cyan-300 hover:border-cyan-400 flex items-center gap-1.5 transition-colors"
           title="Toggle Microphone"
         >
@@ -80,6 +85,24 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
           )}
         </button>
 
+        {/* Camera Monitoring Toggle */}
+        <button
+          onClick={onToggleMonitoring || (() => onSendAction("TOGGLE_CAMERA_MONITORING"))}
+          className={`px-3 py-1 rounded-md text-xs font-mono flex items-center gap-1.5 transition-all shadow-sm ${
+            isMonitoringOn
+              ? "bg-emerald-950/70 border border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)] hover:bg-emerald-900/80"
+              : "border border-cyan-500/20 bg-black/40 text-text-muted hover:text-cyan-300 hover:border-cyan-400"
+          }`}
+          title="Toggle 10s Automatic Camera Monitoring"
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              isMonitoringOn ? "bg-emerald-400 animate-pulse shadow-[0_0_6px_#10B981]" : "bg-zinc-600"
+            }`}
+          />
+          <span>MONITOR: {isMonitoringOn ? "ON" : "OFF"}</span>
+        </button>
+
         {/* Emergency STOP */}
         <button
           onClick={() => onSendAction("STOP")}
@@ -98,16 +121,16 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Type a command or query (e.g. 'Tokyo weather', 'what do you see?')..."
-            className="w-full px-3 py-1 rounded bg-black/60 border border-cyan-500/30 text-white placeholder-text-muted/60 text-xs font-sans focus:outline-none focus:border-cyan-400 transition-colors shadow-inner"
+            placeholder="Type a command or question..."
+            className="w-full px-3 py-1 rounded-md bg-black/50 border border-cyan-500/20 text-xs text-white placeholder-text-muted focus:outline-none focus:border-cyan-400 transition-colors font-mono"
           />
         </div>
         <button
           type="submit"
-          className="px-3 py-1 rounded bg-cyan-950/60 border border-cyan-400/50 text-cyan-200 text-xs font-mono hover:bg-cyan-800/60 flex items-center gap-1 transition-colors"
+          className="px-3 py-1 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 hover:bg-cyan-500/30 flex items-center gap-1 text-xs font-mono transition-colors"
         >
           <Send className="w-3 h-3" />
-          <span>Send</span>
+          <span>SEND</span>
         </button>
       </form>
     </div>

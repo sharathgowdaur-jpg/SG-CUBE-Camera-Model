@@ -122,6 +122,7 @@ class AudioOutputManager:
         self._needs_rebind: bool = True
         self._running: bool = True
         self._com_initialized: bool = False
+        self._last_pcm_write_time: float = 0.0
 
         # Diagnostic Counters
         self.total_switches_detected: int = 0
@@ -149,6 +150,9 @@ class AudioOutputManager:
         self._active_sapi_voice = None
         self._tts_thread = threading.Thread(target=self._tts_worker_loop, daemon=True, name="AudioOutputManager-TTS")
         self._tts_thread.start()
+
+        # Single Authoritative Voice Management (Puck)
+        self.gemini_live_active: bool = False
 
         # Initial Endpoint Resolution
         self.rebind(force=True, reason="Startup Initialization")
@@ -399,12 +403,13 @@ class AudioOutputManager:
                     samplerate=samplerate,
                     channels=1,
                     dtype='int16',
+                    blocksize=1024,
                     device=self.current_pa_index
                 )
                 self._active_stream.start()
                 # Warmup buffer to eliminate initial popping / latency
-                self._active_stream.write(bytes(4800))
-                logger.info(f"[AUDIO] Output stream opened successfully on '{self.current_device_name}' (device_idx={self.current_pa_index}, rate={samplerate}Hz)")
+                self._active_stream.write(bytes(2400))
+                logger.info(f"[AUDIO] Output stream opened successfully on '{self.current_device_name}' (device_idx={self.current_pa_index}, rate={samplerate}Hz, blocksize=1024)")
                 return True
             except Exception as e:
                 logger.warning(f"[AUDIO] Failed to open stream on device index {self.current_pa_index} ({e}). Retrying with default device...")
@@ -414,10 +419,11 @@ class AudioOutputManager:
                         samplerate=samplerate,
                         channels=1,
                         dtype='int16',
+                        blocksize=1024,
                         device=None
                     )
                     self._active_stream.start()
-                    logger.info("[AUDIO] Output stream opened on PortAudio default fallback.")
+                    logger.info("[AUDIO] Output stream opened on PortAudio default fallback (blocksize=1024).")
                     return True
                 except Exception as fallback_err:
                     logger.error(f"[AUDIO] Critical: Output stream creation failed completely: {fallback_err}")
@@ -461,6 +467,9 @@ class AudioOutputManager:
         if not pcm_bytes or len(pcm_bytes) == 0:
             return True
 
+        if len(pcm_bytes) % 2 != 0:
+            pcm_bytes = pcm_bytes[:len(pcm_bytes) - 1]
+
         with self._lock:
             # Check if device changed since last write
             if self._needs_rebind or self._active_stream is None:
@@ -476,6 +485,7 @@ class AudioOutputManager:
             # Primary write attempt
             try:
                 self._active_stream.write(pcm_bytes)
+                self._last_pcm_write_time = time.time()
                 return True
             except Exception as write_err:
                 logger.warning(f"[AUDIO] Stream write error on '{self.current_device_name}' ({write_err}). Initiating dynamic recovery...")
@@ -486,6 +496,7 @@ class AudioOutputManager:
                 self.rebind(force=True, reason="Write error recovery")
                 if self._active_stream is not None:
                     self._active_stream.write(pcm_bytes)
+                    self._last_pcm_write_time = time.time()
                     logger.info(f"[AUDIO] Playback successfully recovered and played through '{self.current_device_name}'.")
                     return True
             except Exception as retry_err:
@@ -573,12 +584,26 @@ class AudioOutputManager:
         except Exception:
             pass
 
+    def set_gemini_live_active(self, active: bool):
+        """Enables or disables Gemini Live active state. When active, local SAPI speech is suppressed to guarantee single authoritative voice (Puck)."""
+        self.gemini_live_active = bool(active)
+        logger.info(f"[AUDIO] Gemini Live active state set to: {self.gemini_live_active}")
+
+    def is_gemini_live_active(self) -> bool:
+        return getattr(self, "gemini_live_active", False)
+
     def speak_text_local(self, text: str, priority: int = PRIORITY_SPEECH, wait: bool = False) -> bool:
         """
         Speaks local text through dedicated SAPI worker with AudioArbiter exclusivity and endpoint verification.
         Non-blocking by default (wait=False), returning in < 1ms to prevent freezing asyncio event loop.
         """
         if not text or not text.strip():
+            return False
+
+        # Single Voice Protection: When Gemini Live is active, suppress local SAPI speech
+        # unless it is a high-priority protected security response (PRIORITY_SAFETY).
+        if getattr(self, "gemini_live_active", False) and priority != PRIORITY_SAFETY:
+            logger.info(f"[AUDIO] Local SAPI speech suppressed: Gemini Live (Puck) is authoritative: '{text[:60]}'")
             return False
 
         # Clear any stale speech in queue before queueing fresh response
@@ -604,6 +629,7 @@ class AudioOutputManager:
         Thread-safe and callable from any thread (e.g. STOP/CANCEL command or barge-in).
         """
         self._tts_stop_event.set()
+        self._last_pcm_write_time = 0.0
         cleared = 0
         while not self._tts_queue.empty():
             try:
@@ -616,9 +642,13 @@ class AudioOutputManager:
             logger.info(f"[AUDIO] Purged {cleared} pending TTS queue items.")
         return True
 
+    def is_playing_pcm(self) -> bool:
+        """ Returns True if PCM audio was actively written to the speaker within the last 400ms """
+        return (time.time() - self._last_pcm_write_time) < 0.40
+
     def is_speaking(self) -> bool:
-        """ Returns True if local TTS playback is actively speaking """
-        return self.arbiter.is_speaking()
+        """ Returns True if local TTS playback OR Gemini PCM playback is actively outputting sound """
+        return self.arbiter.is_speaking() or self.is_playing_pcm()
 
     def is_busy(self) -> bool:
         """ Alias for is_speaking(): Returns True if local TTS or audio output is active """

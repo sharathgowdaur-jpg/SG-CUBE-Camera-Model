@@ -37,6 +37,12 @@ class BridgeServer:
         self.server_thread: Optional[threading.Thread] = None
         self.uvicorn_server: Optional[uvicorn.Server] = None
         self.is_running = False
+        self._cached_battery_pct = "AC"
+        self._last_battery_check = 0.0
+        self._cached_history_items = []
+        self._last_history_fetch = 0.0
+        self._cached_memories_items = []
+        self._last_memory_fetch = 0.0
 
     def _get_store(self):
         if self.app_instance and hasattr(self.app_instance, "engine") and getattr(self.app_instance.engine, "store", None):
@@ -53,6 +59,20 @@ class BridgeServer:
             from assistive.api_key_manager import APIKeyManager
             self._fallback_km = APIKeyManager()
         return self._fallback_km
+
+    def _get_usage_tracker(self):
+        if not hasattr(self, "_usage_tracker"):
+            from assistive.api_usage_tracker import get_usage_tracker
+            self._usage_tracker = get_usage_tracker()
+        return self._usage_tracker
+
+    def _get_camera_monitor_controller(self):
+        if self.app_instance and hasattr(self.app_instance, "camera_monitor_controller") and self.app_instance.camera_monitor_controller:
+            return self.app_instance.camera_monitor_controller
+        if not hasattr(self, "_fallback_cam_monitor"):
+            from assistive.camera_monitor_controller import CameraMonitorController
+            self._fallback_cam_monitor = CameraMonitorController(app=self.app_instance, interval_seconds=10.0)
+        return self._fallback_cam_monitor
 
     def run_system_diagnostics(self) -> Dict[str, Any]:
         """Performs authoritative hardware, network, model, and system diagnostics."""
@@ -485,21 +505,29 @@ class BridgeServer:
                     "network": "Online" if is_online else "Offline",
                 },
             })
+        elif msg_type == "GEMINI_STATE":
+            state_str = str(payload)
+            self.broadcast_sync({
+                "type": "STATUS",
+                "status": {
+                    "gemini_state": state_str,
+                },
+            })
 
     def get_system_telemetry(self) -> Dict[str, Any]:
         """Gathers authoritative real-time state and telemetry from SGCubeApp and Windows."""
         app = self.app_instance
+        now = time.time()
 
-        # Battery calculation
-        battery_pct = "100%"
-        try:
-            battery = psutil.sensors_battery()
-            if battery:
-                battery_pct = f"{int(round(battery.percent))}%"
-            else:
-                battery_pct = "AC"
-        except Exception:
-            battery_pct = "AC"
+        # Battery calculation cached for 10s to avoid repeated kernel syscalls
+        if now - getattr(self, "_last_battery_check", 0.0) > 10.0 or not hasattr(self, "_cached_battery_pct"):
+            try:
+                battery = psutil.sensors_battery()
+                self._cached_battery_pct = f"{int(round(battery.percent))}%" if battery else "AC"
+            except Exception:
+                self._cached_battery_pct = "AC"
+            self._last_battery_check = now
+        battery_pct = self._cached_battery_pct
 
         store = self._get_store()
         km = self._get_key_manager()
@@ -519,6 +547,8 @@ class BridgeServer:
                     "ai": "Ready",
                     "battery": battery_pct,
                     "network": "Online",
+                    "gemini_state": "API_KEY_SELECTED" if has_api_key else "API_KEY_MISSING",
+                    "voice": "Puck",
                 },
                 "environment": {
                     "people": "None",
@@ -540,6 +570,8 @@ class BridgeServer:
                 "first_run_completed": bool(first_run_done),
                 "user_name": str(user_name),
                 "has_api_key": bool(has_api_key),
+                "api_usage": self._get_usage_tracker().get_summary(km),
+                "camera_monitoring": self._get_camera_monitor_controller().get_status(),
             }
 
         cur_state = getattr(app, "current_state", "IDLE")
@@ -595,44 +627,73 @@ class BridgeServer:
                 "path": "Clear",
             }
 
-        # Formatted history items
-        history_items = []
-        try:
-            if hasattr(app, "engine") and app.engine and hasattr(app.engine, "history"):
-                session_id = getattr(app, "active_history_session_id", None)
-                if session_id:
-                    raw_msgs = app.engine.history.get_session_messages(session_id, limit=20)
-                else:
-                    sessions = app.engine.history.list_recent_sessions(limit=1)
-                    if sessions:
-                        raw_msgs = app.engine.history.get_session_messages(sessions[0]["session_id"], limit=20)
-                    else:
-                        raw_msgs = []
-                for m in reversed(raw_msgs):
-                    ts = m.get("created_at")
-                    t_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
-                    sender = "user" if m.get("sender") == "user" else "ai"
-                    history_items.append({
-                        "time": t_str,
-                        "sender": sender,
-                        "text": m.get("text", ""),
-                    })
-        except Exception as e:
-            print(f"[BRIDGE-HIST-WARN] Failed reading history: {e}")
+        # Formatted history items (cached with 3s TTL to prevent redundant SQLite queries)
+        if now - getattr(self, "_last_history_fetch", 0.0) > 3.0 or not hasattr(self, "_cached_history_items"):
+            history_items = []
+            try:
+                h = None
+                if hasattr(app, "engine") and app.engine:
+                    h = getattr(app.engine, "history", None)
+                if not h and not hasattr(self, "_fallback_history"):
+                    try:
+                        from assistive.conversation_history import ConversationHistory
+                        self._fallback_history = ConversationHistory()
+                    except Exception:
+                        self._fallback_history = None
+                h = h or getattr(self, "_fallback_history", None)
 
-        # Formatted memories
-        memories_items = []
-        try:
-            if hasattr(app, "engine") and app.engine and hasattr(app.engine, "memory"):
-                raw_mems = app.engine.memory.list_all_memories()
-                for mem in raw_mems[:20]:
-                    memories_items.append({
-                        "key": mem.get("key_phrase", "Memory"),
-                        "value": mem.get("fact_value", ""),
-                        "category": mem.get("category", "General"),
-                    })
-        except Exception as e:
-            print(f"[BRIDGE-MEM-WARN] Failed reading memories: {e}")
+                if h:
+                    session_id = getattr(app, "active_history_session_id", None) if app else None
+                    if session_id:
+                        raw_msgs = h.get_session_messages(session_id, limit=20)
+                    else:
+                        sessions = h.list_recent_sessions(limit=1)
+                        raw_msgs = h.get_session_messages(sessions[0]["session_id"], limit=20) if sessions else []
+                    for m in reversed(raw_msgs):
+                        ts = m.get("created_at")
+                        t_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
+                        sender = "user" if m.get("sender") == "user" else "ai"
+                        history_items.append({
+                            "time": t_str,
+                            "sender": sender,
+                            "text": m.get("text", ""),
+                        })
+            except Exception as e:
+                print(f"[BRIDGE-HIST-WARN] Failed reading history: {e}")
+            self._cached_history_items = history_items
+            self._last_history_fetch = now
+        else:
+            history_items = self._cached_history_items
+
+        # Formatted memories (cached with 5s TTL to eliminate disk scans on status polls)
+        if now - getattr(self, "_last_memory_fetch", 0.0) > 5.0 or not hasattr(self, "_cached_memories_items"):
+            memories_items = []
+            try:
+                mem = None
+                if hasattr(app, "engine") and app.engine:
+                    mem = getattr(app.engine, "memory", None)
+                if not mem and not hasattr(self, "_fallback_memory"):
+                    try:
+                        from assistive.memory_manager import MemoryManager
+                        self._fallback_memory = MemoryManager()
+                    except Exception:
+                        self._fallback_memory = None
+                mem = mem or getattr(self, "_fallback_memory", None)
+
+                if mem:
+                    raw_mems = mem.list_all_memories()
+                    for mem_item in raw_mems[:20]:
+                        memories_items.append({
+                            "key": mem_item.get("key_phrase", "Memory"),
+                            "value": mem_item.get("fact_value", ""),
+                            "category": mem_item.get("category", "General"),
+                        })
+            except Exception as e:
+                print(f"[BRIDGE-MEM-WARN] Failed reading memories: {e}")
+            self._cached_memories_items = memories_items
+            self._last_memory_fetch = now
+        else:
+            memories_items = self._cached_memories_items
 
         return {
             "state": cur_state,
@@ -645,6 +706,8 @@ class BridgeServer:
                 "ai": "Ready" if ai_running else "Standby",
                 "battery": battery_pct,
                 "network": "Online" if is_net_online else "Offline",
+                "gemini_state": getattr(app, "gemini_session_state", "API_KEY_SELECTED" if has_api_key else "API_KEY_MISSING"),
+                "voice": "Puck",
             },
             "environment": env,
             "scene": scene,
@@ -654,6 +717,8 @@ class BridgeServer:
             "first_run_completed": bool(first_run_done),
             "user_name": str(user_name),
             "has_api_key": bool(has_api_key),
+            "api_usage": self._get_usage_tracker().get_summary(km),
+            "camera_monitoring": self._get_camera_monitor_controller().get_status(),
         }
 
     def execute_action(self, action: str, payload: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -665,6 +730,35 @@ class BridgeServer:
         # Actions that can run standalone (setup, API key management, settings, diagnostics)
         if action in ("RUN_DIAGNOSTICS", "OPEN_DIAGNOSTICS"):
             return {"status": "ok", "diagnostics": self.run_system_diagnostics()}
+
+        elif action in ("TOGGLE_CAMERA_MONITORING", "SET_CAMERA_MONITORING"):
+            cm = self._get_camera_monitor_controller()
+            if action == "SET_CAMERA_MONITORING" and payload and "enabled" in payload:
+                res = cm.set_enabled(bool(payload["enabled"]))
+            else:
+                res = cm.toggle()
+            if self.app_instance:
+                self.app_instance.camera_monitoring_enabled = res["enabled"]
+            self.broadcast_sync({
+                "type": "CAMERA_MONITORING_STATUS",
+                "camera_monitoring": res
+            })
+            return {"status": "ok", "camera_monitoring": res}
+
+        elif action == "GET_CAMERA_MONITORING":
+            cm = self._get_camera_monitor_controller()
+            return {"status": "ok", "camera_monitoring": cm.get_status()}
+
+        elif action == "MANUAL_DESCRIBE_SCENE":
+            cm = self._get_camera_monitor_controller()
+            res = cm.perform_observation(speak_if_idle=True)
+            return {"status": "ok", "camera_monitoring": res}
+
+        elif action == "GET_API_USAGE":
+            return {"status": "ok", "usage": self._get_usage_tracker().get_summary(self._get_key_manager())}
+
+        elif action == "REFRESH_API_USAGE":
+            return {"status": "ok", "usage": self._get_usage_tracker().sync_with_provider(self._get_key_manager())}
 
         elif action == "TEST_API_KEY":
             km = self._get_key_manager()
@@ -813,11 +907,31 @@ class BridgeServer:
                 app.toggle_camera()
             return {"status": "ok", "camera_running": getattr(app, "camera_running", False)}
 
+        elif action == "START_MIC":
+            if hasattr(app, "start_mic"):
+                app.start_mic()
+            elif hasattr(app, "start_ai"):
+                app.start_ai()
+            return {"status": "ok", "ai_running": getattr(app, "ai_running", False)}
+
+        elif action == "STOP_MIC":
+            if hasattr(app, "stop_mic"):
+                app.stop_mic()
+            elif hasattr(app, "stop_ai"):
+                app.stop_ai()
+            return {"status": "ok", "ai_running": getattr(app, "ai_running", False)}
+
         elif action == "TOGGLE_MIC":
             if getattr(app, "ai_running", False):
-                app.stop_ai()
+                if hasattr(app, "stop_mic"):
+                    app.stop_mic()
+                else:
+                    app.stop_ai()
             else:
-                app.start_ai()
+                if hasattr(app, "start_mic"):
+                    app.start_mic()
+                else:
+                    app.start_ai()
             return {"status": "ok", "ai_running": getattr(app, "ai_running", False)}
 
         elif action == "STOP":
@@ -961,6 +1075,40 @@ class BridgeServer:
         async def get_diagnostics(request):
             diag = self.run_system_diagnostics()
             return JSONResponse(diag)
+
+        async def get_api_usage(request):
+            tracker = self._get_usage_tracker()
+            km = self._get_key_manager()
+            return JSONResponse(tracker.get_summary(km))
+
+        async def post_api_usage_refresh(request):
+            tracker = self._get_usage_tracker()
+            km = self._get_key_manager()
+            res = tracker.sync_with_provider(km)
+            return JSONResponse(res)
+
+        async def get_camera_monitoring(request):
+            cm = self._get_camera_monitor_controller()
+            return JSONResponse(cm.get_status())
+
+        async def post_camera_monitoring(request):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            cm = self._get_camera_monitor_controller()
+            if "enabled" in body:
+                res = cm.set_enabled(bool(body["enabled"]))
+            else:
+                res = cm.toggle()
+            if self.app_instance:
+                self.app_instance.camera_monitoring_enabled = res["enabled"]
+            return JSONResponse(res)
+
+        async def post_camera_describe(request):
+            cm = self._get_camera_monitor_controller()
+            res = cm.perform_observation(speak_if_idle=True)
+            return JSONResponse(res)
 
         async def post_complete_setup(request):
             store = self._get_store()
@@ -1180,8 +1328,18 @@ class BridgeServer:
 
         async def get_history(request):
             history_data = []
+            h = None
             if self.app_instance and hasattr(self.app_instance, "engine") and self.app_instance.engine:
-                h = self.app_instance.engine.history
+                h = getattr(self.app_instance.engine, "history", None)
+            if not h and not hasattr(self, "_fallback_history"):
+                try:
+                    from assistive.conversation_history import ConversationHistory
+                    self._fallback_history = ConversationHistory()
+                except Exception:
+                    self._fallback_history = None
+            h = h or getattr(self, "_fallback_history", None)
+
+            if h:
                 sessions = h.list_recent_sessions(limit=10)
                 for s in sessions:
                     msgs = h.get_session_messages(s["session_id"], limit=50)
@@ -1193,8 +1351,19 @@ class BridgeServer:
 
         async def get_memory(request):
             memories_data = []
+            mem = None
             if self.app_instance and hasattr(self.app_instance, "engine") and self.app_instance.engine:
-                memories_data = self.app_instance.engine.memory.list_all_memories()
+                mem = getattr(self.app_instance.engine, "memory", None)
+            if not mem and not hasattr(self, "_fallback_memory"):
+                try:
+                    from assistive.memory_manager import MemoryManager
+                    self._fallback_memory = MemoryManager()
+                except Exception:
+                    self._fallback_memory = None
+            mem = mem or getattr(self, "_fallback_memory", None)
+
+            if mem:
+                memories_data = mem.list_all_memories()
             return JSONResponse({"memories": memories_data})
 
         async def camera_stream(request):
@@ -1258,13 +1427,22 @@ class BridgeServer:
             finally:
                 self.connected_clients.discard(websocket)
 
+        async def get_health(request):
+            return JSONResponse({"status": "ok", "app": "SG-CUBE", "bridge": True})
+
         routes = [
+            Route("/api/health", get_health, methods=["GET"]),
             Route("/api/status", get_status, methods=["GET"]),
             Route("/api/action", post_action, methods=["POST"]),
             Route("/api/history", get_history, methods=["GET"]),
             Route("/api/memory", get_memory, methods=["GET"]),
             Route("/api/camera/stream", camera_stream, methods=["GET"]),
             Route("/api/camera/snapshot", camera_snapshot, methods=["GET"]),
+            Route("/api/usage", get_api_usage, methods=["GET"]),
+            Route("/api/usage/refresh", post_api_usage_refresh, methods=["POST"]),
+            Route("/api/camera/monitoring", get_camera_monitoring, methods=["GET"]),
+            Route("/api/camera/monitoring", post_camera_monitoring, methods=["POST"]),
+            Route("/api/camera/describe", post_camera_describe, methods=["POST"]),
             Route("/api/setup/status", get_setup_status, methods=["GET"]),
             Route("/api/setup/user-name", post_setup_user_name, methods=["POST"]),
             Route("/api/setup/api-key/test", post_test_api_key, methods=["POST"]),
@@ -1294,28 +1472,115 @@ class BridgeServer:
 
         return Starlette(routes=routes)
 
-    def start(self, host: str = "127.0.0.1", port: int = 8000):
+    def _check_and_resolve_port_conflict(self, host: str, port: int) -> bool:
+        """
+        Checks if port is occupied. If occupied by an orphaned/stale SG CUBE process,
+        gracefully terminates only that specific process. Does NOT kill unrelated processes.
+        Returns True if port is free or was freed, False if blocked by an unrelated process.
+        """
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.3)
+            res = sock.connect_ex((host, port))
+            sock.close()
+            if res != 0:
+                return True  # Port is free
+
+            # Port is occupied. Inspect the owning process.
+            import psutil
+            owning_pid = None
+            for conn in psutil.net_connections(kind='inet'):
+                if conn.laddr.port == port and conn.status == 'LISTEN':
+                    owning_pid = conn.pid
+                    break
+
+            if owning_pid is None:
+                return True
+
+            if owning_pid == os.getpid():
+                return True
+
+            try:
+                proc = psutil.Process(owning_pid)
+                cmdline = ' '.join(proc.cmdline()).lower()
+                proc_name = proc.name().lower()
+                # Verify if this is an orphaned SG CUBE / bridge process
+                is_sgcube_proc = (
+                    "python" in proc_name and
+                    ("visionclaw" in cmdline or "bridge_server" in cmdline or "sg-cube" in cmdline)
+                )
+                if is_sgcube_proc:
+                    print(f"[BRIDGE] Port {port} is held by stale SG CUBE process (PID {owning_pid}). Cleaning up...")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                    time.sleep(0.4)
+                    return True
+                else:
+                    print(f"[BRIDGE-WARN] Port {port} is occupied by unrelated process '{proc.name()}' (PID {owning_pid}). Not terminating.")
+                    return False
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return True
+        except Exception as e:
+            logger.warning(f"[BRIDGE] Port conflict check error: {e}")
+            return True
+
+    def start(self, host: str = "127.0.0.1", port: int = 8000) -> bool:
         """Starts the Starlette / Uvicorn server in a dedicated background daemon thread."""
+        if not self._check_and_resolve_port_conflict(host, port):
+            print(f"[BRIDGE-ERROR] Cannot bind to http://{host}:{port}: port is in use by another application.")
+            self.is_running = False
+            return False
+
         starlette_app = self.build_starlette_app()
         config = uvicorn.Config(app=starlette_app, host=host, port=port, log_level="warning")
         self.uvicorn_server = uvicorn.Server(config)
+        server_error = [None]
 
         def run_server():
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
             self.is_running = True
-            print(f"[BRIDGE] SG CUBE Web Bridge Server running on http://{host}:{port}")
-            self.loop.run_until_complete(self.uvicorn_server.serve())
-            self.is_running = False
+            try:
+                self.loop.run_until_complete(self.uvicorn_server.serve())
+            except Exception as e:
+                server_error[0] = e
+            finally:
+                self.is_running = False
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
-        # Wait briefly for server to bind port
-        for _ in range(50):
-            if self.is_running and self.uvicorn_server and self.uvicorn_server.started:
+        # Wait and verify successful port binding & health
+        bound = False
+        for _ in range(60):
+            if server_error[0]:
                 break
+            if self.is_running and self.uvicorn_server and getattr(self.uvicorn_server, 'started', False):
+                try:
+                    import socket
+                    chk_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    chk_sock.settimeout(0.2)
+                    if chk_sock.connect_ex((host, port)) == 0:
+                        bound = True
+                    chk_sock.close()
+                except Exception:
+                    pass
+                if bound:
+                    break
             time.sleep(0.05)
+
+        if bound:
+            print(f"[BRIDGE] SG CUBE Web Bridge Server running on http://{host}:{port}")
+            return True
+        else:
+            err_msg = str(server_error[0]) if server_error[0] else "Server failed to bind or verify health within timeout"
+            print(f"[BRIDGE-ERROR] Failed to bind Web Bridge Server on http://{host}:{port}: {err_msg}")
+            self.stop()
+            return False
 
     def stop(self):
         """Graceful teardown of bridge server."""

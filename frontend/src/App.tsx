@@ -34,6 +34,11 @@ export default function App() {
     removeApiKey,
     runDiagnostics,
     completeSetup,
+    refreshApiUsage,
+    apiUsage,
+    cameraMonitoring,
+    toggleCameraMonitoring,
+    describeSceneNow,
   } = useBackend();
 
   const [isVisionModalOpen, setIsVisionModalOpen] = useState(false);
@@ -78,6 +83,8 @@ export default function App() {
         onSelectTab={handleNavSelect}
         state={data.state}
         isConnected={isConnected}
+        apiUsage={apiUsage}
+        onRefreshApiUsage={refreshApiUsage}
         onOpenSettings={() => {
           setIsSettingsModalOpen(true);
           sendAction("OPEN_SETTINGS");
@@ -105,7 +112,12 @@ export default function App() {
 
           {/* Right: Scene Understanding Panel (~24% width) */}
           <div className="w-[24%] min-w-[220px] max-w-[340px] h-full">
-            <ScenePanel data={data.scene} />
+            <ScenePanel
+              data={data.scene}
+              monitoring={cameraMonitoring}
+              onToggleMonitoring={toggleCameraMonitoring}
+              onDescribeNow={describeSceneNow}
+            />
           </div>
         </section>
 
@@ -138,7 +150,9 @@ export default function App() {
       <QuickActions
         status={data.status}
         state={data.state}
+        cameraMonitoring={cameraMonitoring}
         onSendAction={sendAction}
+        onToggleMonitoring={toggleCameraMonitoring}
       />
 
       {/* Footer Bar */}

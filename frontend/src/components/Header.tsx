@@ -10,13 +10,16 @@ import {
   Settings,
   Shield,
 } from "lucide-react";
-import type { NavTab, AssistantState } from "@/types";
+import type { NavTab, AssistantState, ApiUsageData } from "@/types";
+import { ApiUsageIndicator } from "@/components/ApiUsageIndicator";
 
 interface HeaderProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   state: AssistantState;
   isConnected: boolean;
+  apiUsage?: ApiUsageData | null;
+  onRefreshApiUsage?: () => Promise<any>;
   onOpenSettings?: () => void;
   onOpenVault?: () => void;
 }
@@ -35,6 +38,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   state,
   isConnected,
+  apiUsage,
+  onRefreshApiUsage,
   onOpenSettings,
   onOpenVault,
 }) => {
@@ -95,6 +100,13 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Status Pill & Settings */}
       <div className="flex items-center gap-2.5">
+        {/* Real API Usage & Quota Indicator */}
+        <ApiUsageIndicator
+          apiUsage={apiUsage}
+          onRefresh={onRefreshApiUsage || (async () => {})}
+          onOpenSettings={onOpenSettings}
+        />
+
         {/* Status Pill */}
         <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-[#0A1226] border border-cyan-500/30 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
           <Activity className="w-4 h-4 text-cyan-400 animate-pulse" />

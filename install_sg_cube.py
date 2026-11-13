@@ -188,6 +188,7 @@ def create_windows_shortcuts():
     desk_link = shell.CreateShortcut(desk_path)
     desk_link.TargetPath = run_bat
     desk_link.WorkingDirectory = INSTALL_DIR
+    desk_link.Arguments = ""
     if os.path.exists(icon_path):
         desk_link.IconLocation = f"{icon_path},0"
     desk_link.Description = "SG CUBE — Multimodal AI Assistant"
@@ -206,6 +207,7 @@ def create_windows_shortcuts():
     sm_link = shell.CreateShortcut(os.path.join(start_menu_folder, "SG CUBE.lnk"))
     sm_link.TargetPath = run_bat
     sm_link.WorkingDirectory = INSTALL_DIR
+    sm_link.Arguments = ""
     if os.path.exists(icon_path):
         sm_link.IconLocation = f"{icon_path},0"
     sm_link.Description = "SG CUBE — Multimodal AI Assistant"
@@ -215,6 +217,7 @@ def create_windows_shortcuts():
     sm_wake_link = shell.CreateShortcut(os.path.join(start_menu_folder, "SG CUBE Wake Listener.lnk"))
     sm_wake_link.TargetPath = wake_bat
     sm_wake_link.WorkingDirectory = INSTALL_DIR
+    sm_wake_link.Arguments = ""
     if os.path.exists(icon_path):
         sm_wake_link.IconLocation = f"{icon_path},0"
     sm_wake_link.WindowStyle = 7  # Minimized

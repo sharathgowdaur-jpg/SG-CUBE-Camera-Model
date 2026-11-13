@@ -179,6 +179,14 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     }
   };
 
+  const getHttpBase = () => {
+    const loc = window.location;
+    if (loc.port === "5173") {
+      return `http://127.0.0.1:8000`;
+    }
+    return `${loc.protocol}//${loc.host}`;
+  };
+
   // Step 4: Vault Setup In Wizard
   const handleSetupVaultInWizard = async () => {
     if (vaultMasterPw.length < 6) {
@@ -192,7 +200,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     setIsSettingUpVault(true);
     setVaultMsg(null);
     try {
-      const res = await fetch("/api/vault/setup", {
+      const res = await fetch(`${getHttpBase()}/api/vault/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ master_password: vaultMasterPw }),

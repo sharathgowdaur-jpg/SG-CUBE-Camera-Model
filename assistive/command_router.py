@@ -1109,11 +1109,17 @@ class CommandRouter:
         if "turn greetings on" in clean_text or "start greetings" in clean_text:
             return {"intent": "SETTINGS", "target": "greetings", "params": {"setting": "greeting_enabled", "value": True}}
 
-        if "turn environment monitoring on" in clean_text or "continuous monitoring on" in clean_text:
-            return {"intent": "SETTINGS", "target": "continuous", "params": {"setting": "environment_monitor_enabled", "value": True}}
+        if any(p in clean_text for p in [
+            "turn camera monitoring on", "camera monitoring on", "start camera monitoring", "enable camera monitoring",
+            "turn environment monitoring on", "continuous monitoring on"
+        ]):
+            return {"intent": "SETTINGS", "target": "camera_monitoring", "params": {"setting": "camera_monitoring_enabled", "value": True}}
 
-        if "turn environment monitoring off" in clean_text or "continuous monitoring off" in clean_text:
-            return {"intent": "SETTINGS", "target": "continuous", "params": {"setting": "environment_monitor_enabled", "value": False}}
+        if any(p in clean_text for p in [
+            "turn camera monitoring off", "camera monitoring off", "stop camera monitoring", "disable camera monitoring",
+            "turn environment monitoring off", "continuous monitoring off"
+        ]):
+            return {"intent": "SETTINGS", "target": "camera_monitoring", "params": {"setting": "camera_monitoring_enabled", "value": False}}
 
         # 21. Color Identification Query
         if any(p in clean_text for p in ["what color", "tell me the color", "identify color", "color of this"]):

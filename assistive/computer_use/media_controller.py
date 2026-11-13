@@ -96,6 +96,13 @@ class MediaController:
         if not clean_query:
             return MediaActionResult(False, "play", None, "No music or media title specified.")
 
+        now = time.time()
+        if hasattr(self, '_last_youtube_play') and self._last_youtube_play:
+            last_q, last_t, last_res = self._last_youtube_play
+            if clean_query.lower() == last_q.lower() and (now - last_t) < 4.0:
+                logger.info("[MEDIA-CONTROLLER] Deduplicating repeated play_media for '%s' (elapsed %.2fs)", clean_query, now - last_t)
+                return last_res
+
         logger.info("[MEDIA-CONTROLLER] Playing media: '%s' on %s", clean_query, platform)
 
         # 1. Fetch YouTube search results and video IDs
@@ -141,7 +148,7 @@ class MediaController:
             logger.error("[MEDIA-CONTROLLER] Failed to open URL: %s", e)
             return MediaActionResult(False, "play", clean_query, f"Failed to open browser for {clean_query}.")
 
-        return MediaActionResult(
+        res = MediaActionResult(
             success=True,
             action="play",
             title=clean_query,
@@ -150,6 +157,8 @@ class MediaController:
             verified=bool(direct_video_id),
             details=f"Opened {target_url}"
         )
+        self._last_youtube_play = (clean_query, now, res)
+        return res
 
     def pause_media(self) -> MediaActionResult:
         """
@@ -243,6 +252,13 @@ class MediaController:
         if not clean_query:
             return MediaActionResult(False, "youtube_search", None, "No search term specified for YouTube.")
 
+        now = time.time()
+        if hasattr(self, '_last_youtube_search') and self._last_youtube_search:
+            last_q, last_t, last_res = self._last_youtube_search
+            if clean_query.lower() == last_q.lower() and (now - last_t) < 4.0:
+                logger.info("[MEDIA-CONTROLLER] Deduplicating repeated search_youtube for '%s' (elapsed %.2fs)", clean_query, now - last_t)
+                return last_res
+
         encoded = urllib.parse.quote_plus(clean_query)
         search_url = f"https://www.youtube.com/results?search_query={encoded}"
         logger.info("[MEDIA-CONTROLLER] Searching YouTube: '%s' -> %s", clean_query, search_url)
@@ -253,7 +269,7 @@ class MediaController:
             logger.error("[MEDIA-CONTROLLER] Failed to open YouTube search: %s", e)
             return MediaActionResult(False, "youtube_search", clean_query, f"Could not open YouTube for {clean_query}.")
 
-        return MediaActionResult(
+        res = MediaActionResult(
             success=True,
             action="youtube_search",
             title=clean_query,
@@ -261,6 +277,8 @@ class MediaController:
             verified=True,
             details=f"Opened {search_url}"
         )
+        self._last_youtube_search = (clean_query, now, res)
+        return res
 
     def open_youtube(self) -> MediaActionResult:
         """ Opens YouTube homepage """

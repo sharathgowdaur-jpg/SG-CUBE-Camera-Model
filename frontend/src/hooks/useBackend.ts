@@ -36,6 +36,18 @@ const INITIAL_STATE: BackendState = {
   firstRunCompleted: undefined,
   userName: "",
   hasApiKey: false,
+  apiUsage: null,
+  cameraMonitoring: {
+    enabled: false,
+    intervalSeconds: 10,
+    status: "IDLE",
+    lastObservationTime: null,
+    latestDescription: "Camera monitoring is inactive.",
+    error: null,
+    peopleCount: 0,
+    objectsCount: 0,
+    movementDetected: false,
+  },
 };
 
 export function useBackend() {
@@ -80,6 +92,8 @@ export function useBackend() {
           firstRunCompleted: json.first_run_completed ?? prev.firstRunCompleted,
           userName: json.user_name ?? prev.userName,
           hasApiKey: json.has_api_key ?? prev.hasApiKey,
+          apiUsage: json.api_usage !== undefined ? json.api_usage : prev.apiUsage,
+          cameraMonitoring: json.camera_monitoring !== undefined ? json.camera_monitoring : prev.cameraMonitoring,
         }));
         setIsConnected(true);
       }
@@ -228,6 +242,79 @@ export function useBackend() {
     }
   }, [getHttpBase]);
 
+  const fetchApiUsage = useCallback(async () => {
+    try {
+      const res = await fetch(`${getHttpBase()}/api/usage`);
+      if (res.ok) {
+        const json = await res.json();
+        setData((prev) => ({ ...prev, apiUsage: json }));
+        return json;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }, [getHttpBase]);
+
+  const refreshApiUsage = useCallback(async () => {
+    try {
+      const res = await fetch(`${getHttpBase()}/api/usage/refresh`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setData((prev) => ({ ...prev, apiUsage: json }));
+        return json;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }, [getHttpBase]);
+
+  const setCameraMonitoring = useCallback(async (enabled: boolean) => {
+    try {
+      const res = await fetch(`${getHttpBase()}/api/camera/monitoring`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setData((prev) => ({ ...prev, cameraMonitoring: json }));
+        return json;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }, [getHttpBase]);
+
+  const toggleCameraMonitoring = useCallback(async () => {
+    try {
+      const current = data.cameraMonitoring?.enabled ?? false;
+      return await setCameraMonitoring(!current);
+    } catch {
+      return null;
+    }
+  }, [data.cameraMonitoring, setCameraMonitoring]);
+
+  const describeSceneNow = useCallback(async () => {
+    try {
+      const res = await fetch(`${getHttpBase()}/api/camera/describe`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setData((prev) => ({ ...prev, cameraMonitoring: json }));
+        return json;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }, [getHttpBase]);
+
   useEffect(() => {
     fetchStatus();
 
@@ -261,6 +348,8 @@ export function useBackend() {
                 firstRunCompleted: msg.first_run_completed ?? prev.firstRunCompleted,
                 userName: msg.user_name ?? prev.userName,
                 hasApiKey: msg.has_api_key ?? prev.hasApiKey,
+                apiUsage: msg.api_usage !== undefined ? msg.api_usage : prev.apiUsage,
+                cameraMonitoring: msg.camera_monitoring !== undefined ? msg.camera_monitoring : prev.cameraMonitoring,
               }));
             } else if (msg.type === "TRANSCRIPTION") {
               setData((prev) => ({
@@ -296,8 +385,16 @@ export function useBackend() {
 
     connectWs();
 
-    // Secondary status poll interval every 3 seconds
-    const interval = window.setInterval(fetchStatus, 3000);
+    // Adaptive status poll: poll frequently (every 3s) only when disconnected;
+    // relax to 15s watchdog when live WebSocket is actively streaming.
+    let tickCount = 0;
+    const interval = window.setInterval(() => {
+      tickCount++;
+      const isWsOpen = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+      if (!isWsOpen || tickCount % 5 === 0) {
+        fetchStatus();
+      }
+    }, 3000);
 
     return () => {
       unmounted = true;
@@ -321,5 +418,12 @@ export function useBackend() {
     runDiagnostics,
     completeSetup,
     resetSetup,
+    fetchApiUsage,
+    refreshApiUsage,
+    apiUsage: data.apiUsage,
+    cameraMonitoring: data.cameraMonitoring,
+    setCameraMonitoring,
+    toggleCameraMonitoring,
+    describeSceneNow,
   };
 }

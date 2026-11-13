@@ -22,6 +22,7 @@ import time
 import queue
 import logging
 import threading
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any, Callable
 
 import sounddevice as sd
@@ -55,7 +56,7 @@ class AudioInputStreamWrapper:
         native_sr: int,
         native_ch: int,
         user_callback: Optional[Callable] = None,
-        gain: float = 2.5
+        gain: float = 1.0
     ):
         self.device_idx = device_idx
         self.native_sr = native_sr
@@ -73,7 +74,20 @@ class AudioInputStreamWrapper:
         else:
             self.native_blocksize = 1024
 
+        self._callback_count = 0
+        self._last_log_time = 0.0
+        self._last_cb_time = 0.0
+
         def internal_callback(indata, frames, time_info, status):
+            t_start = time.time()
+            cb_interval_ms = (t_start - self._last_cb_time) * 1000.0 if self._last_cb_time > 0.0 else 0.0
+            self._last_cb_time = t_start
+            self._callback_count += 1
+            cb_idx = self._callback_count
+            now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            overflow = bool(status.input_overflow) if status else False
+            if status:
+                print(f"[{now_ts}] [MIC-STATUS] Stream status={status} (overflow={overflow})")
             try:
                 # Convert buffer to int16 numpy array
                 raw_samples = np.frombuffer(indata, dtype=np.int16)
@@ -86,10 +100,15 @@ class AudioInputStreamWrapper:
                 else:
                     mono = raw_samples
 
-                # Sample rate conversion to 16000Hz
+                # Sample rate conversion to 16000Hz with anti-alias filtering
                 if self.native_sr == 48000:
-                    # Exact 3:1 integer decimation
-                    mono_16k = mono[::3]
+                    try:
+                        import scipy.signal
+                        mono_16k = scipy.signal.resample_poly(mono.astype(np.float32), 1, 3).astype(np.int16)
+                    except Exception:
+                        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32) / 9.0
+                        filtered = np.convolve(mono.astype(np.float32), kernel, mode='same')
+                        mono_16k = filtered[::3].astype(np.int16)
                 elif self.native_sr == 44100:
                     # Linear decimation/interpolation fallback
                     target_len = int(len(mono) * (16000 / 44100))
@@ -98,14 +117,37 @@ class AudioInputStreamWrapper:
                 else:
                     mono_16k = mono
 
-                # Digital gain boost for robust VAD triggering
+                # Digital gain adjustment with soft-limiting protection
                 if self.gain != 1.0 and len(mono_16k) > 0:
                     amplified = mono_16k.astype(np.float32) * self.gain
-                    mono_16k = np.clip(amplified, -32768.0, 32767.0).astype(np.int16)
+                    peak_val = float(np.max(np.abs(amplified)))
+                    if peak_val > 30000.0:
+                        # Soft-knee compression to prevent harsh integer clipping at +/-32767
+                        normalized = amplified / 32768.0
+                        compressed = np.tanh(normalized) * 32000.0
+                        mono_16k = compressed.astype(np.int16)
+                    else:
+                        mono_16k = np.clip(amplified, -32768.0, 32767.0).astype(np.int16)
 
                 out_bytes = mono_16k.tobytes()
+                proc_time_ms = (time.time() - t_start) * 1000.0
+                raw_rms = float(np.sqrt(np.mean(raw_samples.astype(np.float64)**2))) if len(raw_samples) > 0 else 0.0
+                raw_peak = int(np.max(np.abs(raw_samples))) if len(raw_samples) > 0 else 0
+                conv_rms = float(np.sqrt(np.mean(mono_16k.astype(np.float64)**2))) if len(mono_16k) > 0 else 0.0
+                conv_peak = int(np.max(np.abs(mono_16k))) if len(mono_16k) > 0 else 0
+
+                should_log = (cb_idx <= 3) or (conv_rms > 250.0) or (t_start - self._last_log_time >= 1.5)
+                if should_log:
+                    self._last_log_time = t_start
+                    print(f"[{now_ts}] [MIC-03] Callback executed (frame_count={cb_idx}, frames={frames}, interval={cb_interval_ms:.1f}ms, overflow={overflow}, raw_bytes={len(indata)}, ch={self.native_ch})")
+                    print(f"[{now_ts}] [MIC-04] Audio input level measured (frame_count={cb_idx}, raw_RMS={raw_rms:.2f}, raw_Peak={raw_peak})")
+                    print(f"[{now_ts}] [MIC-05] Audio converted (frame_count={cb_idx}, samples={len(mono_16k)}, bytes={len(out_bytes)}, 16kHz mono int16, RMS={conv_rms:.2f}, Peak={conv_peak}, proc_time={proc_time_ms:.2f}ms)")
+
                 if self.user_callback is not None:
-                    self.user_callback(out_bytes, len(mono_16k), time_info, status)
+                    try:
+                        self.user_callback(out_bytes, len(mono_16k), time_info, status, cb_idx=cb_idx, rms=conv_rms, peak=conv_peak)
+                    except TypeError:
+                        self.user_callback(out_bytes, len(mono_16k), time_info, status)
                 elif self.chunk_queue is not None:
                     try:
                         self.chunk_queue.put_nowait(out_bytes)
@@ -214,9 +256,10 @@ class AudioInputManager:
                     if is_muted:
                         vol_ctrl.SetMute(False, None)
                         logger.info(f"[AUDIO-INPUT] Unmuted capture endpoint (role={role})")
-                    if cur_vol < 0.80:
-                        vol_ctrl.SetMasterVolumeLevelScalar(0.85, None)
-                        logger.info(f"[AUDIO-INPUT] Adjusted capture volume from {cur_vol*100:.1f}% to 85% (role={role})")
+                    if cur_vol < 0.20:
+                        # Restore to safe baseline (0.75) only if severely attenuated/near-muted
+                        vol_ctrl.SetMasterVolumeLevelScalar(0.75, None)
+                        print(f"[AUDIO-INPUT] Restored severely attenuated capture volume from {cur_vol*100:.1f}% to 75.0% (role={role})")
                 except Exception:
                     pass
         except Exception as e:
@@ -264,6 +307,8 @@ class AudioInputManager:
                 self.active_host_api = api_name
                 self.active_sr = sr
                 self.active_ch = ch
+                now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                print(f"[{now_ts}] [MIC-01] Device selected (ID={idx}, name='{name}', API='{api_name}', native_sr={sr}, native_ch={ch})")
                 return idx, sr, ch, name
             except Exception:
                 continue
@@ -291,21 +336,24 @@ class AudioInputManager:
         self.active_ch = 1
         return None, 16000, 1, "Default Microphone"
 
-    def open_stream(self, callback: Optional[Callable] = None, gain: float = 2.5) -> AudioInputStreamWrapper:
+    def open_stream(self, callback: Optional[Callable] = None, gain: float = 1.0) -> AudioInputStreamWrapper:
         """
         Opens and returns an AudioInputStreamWrapper configured with the optimal device
         and normalization pipeline.
         """
         dev_idx, sr, ch, name = self.detect_best_device()
+        now_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         logger.info(f"[AUDIO-INPUT] Opening stream on '{name}' (idx={dev_idx}, sr={sr}, ch={ch}, gain={gain}x)")
         print(f"[MAIN-MIC] Acquired input device: '{name}' (API={self.active_host_api}, sr={sr}, ch={ch})")
-        return AudioInputStreamWrapper(
+        wrapper = AudioInputStreamWrapper(
             device_idx=dev_idx,
             native_sr=sr,
             native_ch=ch,
             user_callback=callback,
             gain=gain
         )
+        print(f"[{now_ts}] [MIC-02] Stream opened (Device ID={dev_idx}, native_sr={sr}, native_ch={ch}, target_sr=16000, target_ch=1, blocksize={wrapper.native_blocksize}, gain={gain}x)")
+        return wrapper
 
 
 def get_audio_input_manager() -> AudioInputManager:
