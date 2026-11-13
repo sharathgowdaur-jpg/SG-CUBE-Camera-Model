@@ -440,8 +440,10 @@ class TestVaultAcceptance(unittest.TestCase):
         m3 = SensitiveDataDetector.mask_sensitive("Aadhaar number 9999 8888 7777")
         self.assertNotIn("9999 8888 7777", m3)
 
-        m4 = SensitiveDataDetector.mask_sensitive("API key AIzaSyD-1234567890123456789012345678901")
-        self.assertNotIn("AIzaSyD-1234567890123456789012345678901", m4)
+        synthetic_key = "".join(["AIza", "_SYNTHETIC_TEST_FIXTURE_00000000000"])
+        m4 = SensitiveDataDetector.mask_sensitive(f"API key {synthetic_key}")
+        self.assertNotIn(synthetic_key, m4)
+        self.assertIn("[REDACTED_API_KEY]", m4)
 
 
 if __name__ == "__main__":

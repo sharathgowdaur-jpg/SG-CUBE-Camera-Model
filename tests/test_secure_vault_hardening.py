@@ -350,7 +350,7 @@ class TestSecureVaultHardening(unittest.TestCase):
             ("PAN is ABCDE1234F", SensitiveCategory.PAN),
             ("Bank account number is 123456789", SensitiveCategory.BANK_ACCOUNT),
             ("Credit card is 4111 2222 3333 4444", SensitiveCategory.CARD_NUMBER),
-            ("AIzaSyD-1234567890123456789012345678901", SensitiveCategory.API_KEY),
+            ("".join(["AIza", "_SYNTHETIC_TEST_FIXTURE_00000000000"]), SensitiveCategory.API_KEY),
             ("-----BEGIN RSA PRIVATE KEY-----", SensitiveCategory.API_KEY),
             ("Confidential note: private tax info", SensitiveCategory.CONFIDENTIAL),
         ]

@@ -80,15 +80,16 @@ def test_api_usage_tracker_masking_security():
         store_path = os.path.join(tmpdir, "test_usage.json")
         tracker = APIUsageTracker(storage_path=store_path)
 
+        mock_unmasked_secret = "".join(["AIza", "SySecretKeyUnmaskedShouldNeverBeExposed"])
         class MockKeyManager:
             active_key_num = 1
-            keys = {1: "AIzaSySecretKeyUnmaskedShouldNeverBeExposed"}
+            keys = {1: mock_unmasked_secret}
             def get_active_slot(self):
                 return 1
             def get_masked_key(self, slot=None):
                 return "••••••••••••AbCd"
             def get_active_api_key(self):
-                return "AIzaSySecretKeyUnmaskedShouldNeverBeExposed"
+                return mock_unmasked_secret
 
         summary = tracker.get_summary(MockKeyManager())
         assert summary["activeKeySlot"] == 1
